@@ -1,0 +1,78 @@
+name: Construire les applications (APK + EXE)
+
+on:
+  workflow_dispatch:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: write
+
+jobs:
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - run: npm install
+      - run: node scripts/build.mjs
+      - uses: actions/upload-artifact@v4
+        with: { name: www, path: dist }
+
+  android:
+    needs: web
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: www, path: dist }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: 17 }
+      - name: Capacitor
+        run: |
+          npm install --no-save @capacitor/core@6 @capacitor/cli@6 @capacitor/android@6 @capacitor/filesystem@6 @capacitor/share@6
+          npx cap add android
+          npx cap sync android
+          cp -r android-res/* android/app/src/main/res/
+      - name: Compiler l'APK
+        run: |
+          chmod +x android/gradlew
+          cd android && ./gradlew assembleDebug
+      - run: cp android/app/build/outputs/apk/debug/app-debug.apk MayaExcel.apk
+      - uses: actions/upload-artifact@v4
+        with: { name: MayaExcel-Android-APK, path: MayaExcel.apk }
+
+  windows:
+    needs: web
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with: { name: www, path: desktop/www }
+      - uses: actions/setup-node@v4
+        with: { node-version: 20 }
+      - name: Installateur Windows
+        working-directory: desktop
+        env: { MAYA_KIND: Installateur }
+        run: |
+          npm install
+          npx electron-builder --win nsis --publish never
+      - name: Version portable (sans installation)
+        working-directory: desktop
+        env: { MAYA_KIND: Portable }
+        run: npx electron-builder --win portable --publish never
+      - uses: actions/upload-artifact@v4
+        with: { name: MayaExcel-Windows-EXE, path: desktop/release/*.exe }
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [android, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with: { path: artifacts, merge-multiple: true }
+      - uses: softprops/action-gh-release@v2
+        with: { files: 'artifacts/*' }

@@ -30,16 +30,30 @@ Fusionnez plusieurs fichiers Excel (.xlsx, .xls, .csv) en **un seul tableau** pr
 Aucune installation (`npm install`) n'est nécessaire. La commande de construction écrit l'adresse réelle de votre site dans les balises OpenGraph.
 Si vous utilisez un nom de domaine personnalisé, ajoutez dans Vercel (*Settings → Environment Variables*) la variable `SITE_URL` = `https://votre-domaine.com`.
 
-## Installer sur le téléphone
+## Applications Android (APK) et Windows (EXE)
+
+Les deux applications sont construites **automatiquement par GitHub** (gratuit), sans rien installer sur votre ordinateur.
+Elles contiennent les bibliothèques Excel : tout fonctionne sans connexion, dès la première ouverture.
+
+1. Envoyez le projet sur GitHub (étape ci-dessus).
+2. Sur GitHub : onglet **Actions** → **Construire les applications (APK + EXE)** → **Run workflow**.
+3. Après 8 à 15 minutes, ouvrez l'exécution terminée : en bas, section **Artifacts**, téléchargez
+   - `MayaExcel-Android-APK` → `MayaExcel.apk`
+   - `MayaExcel-Windows-EXE` → l'installateur `…Installateur.exe` et la version `…Portable.exe` (sans installation)
+
+Pour publier des liens de téléchargement permanents, créez une *release* avec un tag commençant par `v` (par exemple `v2.0.0`) :
+les fichiers sont alors ajoutés automatiquement à la page **Releases** du dépôt.
+
+- **Android** : copiez `MayaExcel.apk` sur le téléphone, ouvrez-le et autorisez l'installation depuis cette source. Au téléchargement du résultat, la feuille de partage du téléphone s'ouvre pour enregistrer ou ouvrir le fichier Excel.
+- **Windows** : Windows SmartScreen peut afficher « application non reconnue » (le programme n'est pas signé) : cliquez sur *Informations complémentaires* puis *Exécuter quand même*.
+
+## Installer sans passer par l'APK
 
 - **Android (Chrome)** : un bouton « Installer » apparaît en haut de la page.
 - **iPhone (Safari)** : Partager → *Sur l'écran d'accueil*.
+- **PC (Chrome ou Edge)** : icône « Installer » dans la barre d'adresse.
 
-## Aperçu lors d'un partage (OpenGraph)
-
-La page contient toutes les balises OpenGraph et Twitter (titre, description, image 1200×630). Les adresses complètes sont
-renseignées automatiquement au déploiement. Après un changement, WhatsApp/Facebook gardent l'ancien aperçu en cache :
-utilisez l'outil « Débogueur de partage » de Facebook pour le rafraîchir.
+L'application installée de cette façon fonctionne aussi hors connexion.
 
 ## Structure
 
@@ -47,13 +61,14 @@ utilisez l'outil « Débogueur de partage » de Facebook pour le rafraîchir.
 index.html            page unique
 css/style.css         styles
 js/merge.js           moteur de fusion (sans dépendance)
-scripts/build.mjs     construction pour Vercel (adresse OpenGraph)
 js/app.js             interface, lecture et export
 sw.js                 service worker (mode hors connexion)
 manifest.webmanifest  configuration de l'application installable
 icons/                icônes de l'application
-vercel.json           en-têtes HTTP pour Vercel
+scripts/build.mjs     construction (adresse OpenGraph + bibliothèques embarquées)
+vercel.json           configuration Vercel
+desktop/              application Windows (Electron)
+android-res/          icônes de l'application Android
+capacitor.config.json configuration de l'application Android (Capacitor)
+.github/workflows/    construction automatique de l'APK et de l'EXE
 ```
-
-Les bibliothèques SheetJS (lecture des fichiers) et ExcelJS (création du fichier mis en forme) sont chargées depuis cdnjs / jsDelivr
-puis mises en cache par le service worker.

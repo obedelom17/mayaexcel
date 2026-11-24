@@ -1,7 +1,7 @@
 {
   "buildCommand": "node scripts/build.mjs",
   "outputDirectory": "dist",
-  "installCommand": "echo none",
+  "installCommand": "npm install",
   "cleanUrls": true,
   "headers": [
     {

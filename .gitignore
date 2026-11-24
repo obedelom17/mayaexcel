@@ -1,3 +1,8 @@
-.vercel
 node_modules
+dist
+.vercel
 .DS_Store
+android/
+desktop/node_modules
+desktop/release
+desktop/www

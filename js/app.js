@@ -12,10 +12,12 @@
 
   const LIBS = {
     xlsx: [
+      '/vendor/xlsx.full.min.js',
       'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
       'https://cdn.jsdelivr.net/npm/xlsx@0.18.5/dist/xlsx.full.min.js',
     ],
     exceljs: [
+      '/vendor/exceljs.min.js',
       'https://cdnjs.cloudflare.com/ajax/libs/exceljs/4.4.0/exceljs.min.js',
       'https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js',
     ],
@@ -562,7 +564,27 @@
     return d.getFullYear() + '-' + p(d.getMonth() + 1) + '-' + p(d.getDate());
   }
 
-  function download(blob, name) {
+  function blobToBase64(blob) {
+    return new Promise((resolve, reject) => {
+      const fr = new FileReader();
+      fr.onload = () => resolve(String(fr.result).split(',')[1]);
+      fr.onerror = reject;
+      fr.readAsDataURL(blob);
+    });
+  }
+
+  async function download(blob, name) {
+    // Application Android : le téléchargement classique n'existe pas, on passe par le partage du téléphone.
+    const cap = window.Capacitor;
+    if (cap && cap.isNativePlatform && cap.isNativePlatform() && cap.Plugins && cap.Plugins.Filesystem && cap.Plugins.Share) {
+      try {
+        const saved = await cap.Plugins.Filesystem.writeFile({ path: name, data: await blobToBase64(blob), directory: 'CACHE' });
+        await cap.Plugins.Share.share({ title: name, url: saved.uri, dialogTitle: 'Enregistrer ou ouvrir le fichier' });
+        return;
+      } catch (e) {
+        if (/cancel/i.test(String(e && e.message))) return;
+      }
+    }
     const url = URL.createObjectURL(blob);
     const a = document.createElement('a');
     a.href = url;
@@ -658,7 +680,7 @@
         ws2.getColumn(3).width = 12;
 
         const buf = await wb.xlsx.writeBuffer();
-        download(new Blob([buf], { type: mime }), name);
+        await download(new Blob([buf], { type: mime }), name);
       } catch (styledErr) {
         // Plan B : fichier simple avec SheetJS
         await loadLib('xlsx');
@@ -668,7 +690,7 @@
         const wb = XLSX.utils.book_new();
         XLSX.utils.book_append_sheet(wb, ws, 'Fusion');
         const out = XLSX.write(wb, { bookType: 'xlsx', type: 'array', cellDates: true });
-        download(new Blob([out], { type: mime }), name);
+        await download(new Blob([out], { type: mime }), name);
       }
       toast('Fichier Excel prêt.');
       burst(btn);
@@ -942,8 +964,10 @@
     }
   }
 
+  const isShell = () => /Electron/i.test(navigator.userAgent) || !!(window.Capacitor && window.Capacitor.isNativePlatform && window.Capacitor.isNativePlatform());
+
   function showInstallUi() {
-    if (isStandalone()) return;
+    if (isStandalone() || isShell()) return;
     installBtn.hidden = false;
     if (!dismissed()) strip.hidden = false;
   }
@@ -986,9 +1010,9 @@
     }
   });
 
-  if (isIOS() && !isStandalone()) showInstallUi();
+  if (isIOS() && !isStandalone() && !isShell()) showInstallUi();
 
-  if ('serviceWorker' in navigator && (location.protocol === 'https:' || location.hostname === 'localhost')) {
+  if ('serviceWorker' in navigator && !/Electron/i.test(navigator.userAgent) && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));
   }
 
