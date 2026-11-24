@@ -1,0 +1,173 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>MayaExcel – Fusionnez vos fichiers Excel en un seul tableau</title>
+  <meta name="description" content="Déposez plusieurs fichiers Excel : MayaExcel aligne les colonnes, range les lignes et vous rend un seul tableau propre. Gratuit, sur votre téléphone ou votre ordinateur.">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#0A3D2E" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0B1A15" media="(prefers-color-scheme: dark)">
+
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
+  <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
+  <link rel="icon" href="/favicon.ico" sizes="48x48">
+  <link rel="apple-touch-icon" href="/icons/apple-touch-icon.png">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-title" content="MayaExcel">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="MayaExcel – Plusieurs fichiers Excel, un seul tableau">
+  <meta property="og:description" content="Déposez les fichiers de votre équipe, récupérez un tableau Excel unique, propre et trié.">
+  <meta property="og:image" content="/og-image.png">
+  <meta name="twitter:card" content="summary_large_image">
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Figtree:wght@400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+  <!-- Symboles réutilisables -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true">
+    <defs>
+      <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1">
+        <stop offset="0" stop-color="#0A3D2E"/>
+        <stop offset="1" stop-color="#0E9F67"/>
+      </linearGradient>
+      <symbol id="logo" viewBox="0 0 512 512">
+        <rect width="512" height="512" rx="116" fill="url(#mg)"/>
+        <g fill="#fff">
+          <rect x="106" y="106" width="52" height="52" rx="11"/><rect x="354" y="106" width="52" height="52" rx="11"/>
+          <rect x="106" y="168" width="52" height="52" rx="11"/><rect x="168" y="168" width="52" height="52" rx="11"/><rect x="292" y="168" width="52" height="52" rx="11"/><rect x="354" y="168" width="52" height="52" rx="11"/>
+          <rect x="106" y="230" width="52" height="52" rx="11"/><rect x="354" y="230" width="52" height="52" rx="11"/>
+          <rect x="106" y="292" width="52" height="52" rx="11"/><rect x="354" y="292" width="52" height="52" rx="11"/>
+          <rect x="106" y="354" width="52" height="52" rx="11"/><rect x="354" y="354" width="52" height="52" rx="11"/>
+        </g>
+        <rect x="230" y="230" width="52" height="52" rx="11" fill="#FFC233"/>
+      </symbol>
+    </defs>
+  </svg>
+
+  <div class="wrap">
+    <header class="top">
+      <a class="brand" href="/" aria-label="MayaExcel – accueil">
+        <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
+        <span>MayaExcel</span>
+      </a>
+      <button type="button" class="btn btn-ghost btn-small" id="installBtn" hidden>Installer l’application</button>
+    </header>
+
+    <aside class="install-strip" id="installStrip" hidden>
+      <svg class="install-mark" aria-hidden="true"><use href="#logo"/></svg>
+      <p>Ajoutez MayaExcel à l’écran d’accueil de votre téléphone.</p>
+      <button type="button" class="btn btn-primary btn-small" id="installStripBtn">Installer</button>
+      <button type="button" class="icon-btn" id="installDismiss" aria-label="Fermer">×</button>
+    </aside>
+
+    <main>
+      <section class="hero">
+        <div class="hero-text">
+          <h1>Dix fichiers Excel.<br><span class="h1-b">Un seul tableau.</span></h1>
+          <p class="lead">Chaque personne envoie son fichier. MayaExcel repère les colonnes, regroupe celles qui veulent dire la même chose, range les lignes et vous rend un fichier propre.</p>
+        </div>
+
+        <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
+          <svg class="drop-art" viewBox="0 0 300 112" aria-hidden="true">
+            <g class="art-small">
+              <rect x="4" y="4" width="76" height="30" rx="5"/><rect x="4" y="4" width="76" height="9" rx="4" class="art-head"/><path d="M12 22h28M12 28h42"/>
+              <rect x="14" y="41" width="76" height="30" rx="5"/><rect x="14" y="41" width="76" height="9" rx="4" class="art-head"/><path d="M22 59h34M22 65h24"/>
+              <rect x="4" y="78" width="76" height="30" rx="5"/><rect x="4" y="78" width="76" height="9" rx="4" class="art-head"/><path d="M12 96h22M12 102h38"/>
+            </g>
+            <g class="art-arrows"><path d="M96 24c28 0 40 20 62 30M104 57h54M96 94c28 0 40-20 62-30"/><path d="M152 49l8 5-8 5"/></g>
+            <g class="art-big">
+              <rect x="172" y="8" width="124" height="96" rx="8"/>
+              <rect x="172" y="8" width="124" height="20" rx="8" class="art-head"/>
+              <path d="M172 48h124M172 68h124M172 88h124M214 28v76M256 28v76" class="art-grid"/>
+              <rect x="173" y="49" width="122" height="18" class="art-mark"/>
+            </g>
+          </svg>
+          <p class="drop-title">Déposez vos fichiers Excel ici</p>
+          <p class="drop-sub">Format .xlsx, .xls ou .csv. Autant de fichiers que vous voulez.</p>
+          <button type="button" class="btn btn-primary" id="pickBtn">Choisir des fichiers</button>
+          <input type="file" id="fileInput" multiple accept=".xlsx,.xlsm,.xls,.csv,.ods,.tsv" hidden>
+          <p class="drop-note">Vos fichiers restent sur votre appareil : rien n’est envoyé sur Internet.</p>
+        </div>
+      </section>
+
+      <section class="block" id="filesBlock" hidden aria-labelledby="filesTitle">
+        <div class="block-head">
+          <h2 id="filesTitle"><span class="step">1</span> Vos fichiers <span class="count" id="filesCount"></span></h2>
+          <div class="block-tools">
+            <button type="button" class="btn btn-ghost btn-small" id="addMoreBtn">Ajouter</button>
+            <button type="button" class="btn btn-quiet btn-small" id="clearBtn">Tout effacer</button>
+          </div>
+        </div>
+        <ul class="files" id="filesList"></ul>
+      </section>
+
+      <section class="block" id="resultBlock" hidden aria-labelledby="resultTitle">
+        <div class="block-head">
+          <h2 id="resultTitle"><span class="step">2</span> Le tableau fusionné</h2>
+        </div>
+
+        <p class="summary" id="summary"></p>
+
+        <div class="panel settings" id="settings">
+          <div class="field">
+            <label for="sortBy">Trier par</label>
+            <div class="field-row">
+              <select id="sortBy"></select>
+              <button type="button" class="btn btn-ghost dir" id="sortDir" aria-label="Sens du tri"></button>
+            </div>
+          </div>
+          <div class="toggles">
+            <label class="check"><input type="checkbox" id="optDedupe"> <span>Retirer les doublons</span></label>
+            <label class="check"><input type="checkbox" id="optNumber"> <span>Numéroter les lignes</span></label>
+            <label class="check"><input type="checkbox" id="optSource"> <span>Ajouter le fichier d’origine</span></label>
+            <label class="check"><input type="checkbox" id="optSheets"> <span>Lire toutes les feuilles de chaque fichier</span></label>
+          </div>
+        </div>
+
+        <details class="panel cols" id="colsPanel">
+          <summary><span id="colsSummary">Colonnes</span></summary>
+          <p class="cols-help">Renommez, masquez ou déplacez les colonnes. Un point jaune indique des colonnes regroupées automatiquement.</p>
+          <ol class="cols-list" id="colsList"></ol>
+        </details>
+
+        <div class="sheet-wrap">
+          <div class="sheet" id="sheet" tabindex="0" aria-label="Aperçu du tableau fusionné"></div>
+          <p class="sheet-note" id="sheetNote"></p>
+        </div>
+
+        <div class="actions" id="actions">
+          <button type="button" class="btn btn-primary btn-big" id="dlXlsx">Télécharger en Excel</button>
+          <button type="button" class="btn btn-ghost btn-big" id="dlCsv">CSV</button>
+        </div>
+      </section>
+    </main>
+
+    <footer class="foot">
+      <p><strong>MayaExcel</strong> traite tout sur votre appareil. Une fois installée, l’application fonctionne aussi sans connexion.</p>
+    </footer>
+  </div>
+
+  <dialog id="iosDialog" class="dialog" aria-labelledby="iosTitle">
+    <h2 id="iosTitle">Installer MayaExcel sur iPhone</h2>
+    <ol>
+      <li>Ouvrez cette page dans <strong>Safari</strong>.</li>
+      <li>Touchez le bouton <strong>Partager</strong> (le carré avec une flèche vers le haut).</li>
+      <li>Choisissez <strong>Sur l’écran d’accueil</strong>, puis <strong>Ajouter</strong>.</li>
+    </ol>
+    <form method="dialog"><button class="btn btn-primary" value="ok">J’ai compris</button></form>
+  </dialog>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <script src="/js/merge.js"></script>
+  <script src="/js/app.js"></script>
+</body>
+</html>
