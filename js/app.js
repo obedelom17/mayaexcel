@@ -65,7 +65,10 @@
   const state = {
     files: [], // {id,name,size,status:'reading'|'ok'|'error',error,sheets}
     allSheets: true,
-    opts: { dedupe: true, numbering: true, source: false, sortBy: 'auto', sortDir: 'asc' },
+    splitNames: true,
+    separate: [], // intitulés que l'utilisateur a détachés d'un regroupement
+    staging: false,
+    opts: { combine: true, clean: true, numbering: true, source: false, sortBy: 'auto', sortDir: 'asc' },
     cols: [], // [{id,key,label,include}]
     overrides: {}, // key → {label, include}  (mémorise les choix de l'utilisateur)
     analysis: null,
@@ -159,6 +162,7 @@
     if (!fresh.length) return;
 
     renderFiles();
+    startStage();
     await tick();
 
     for (const entry of fresh) {
@@ -179,25 +183,91 @@
       renderFiles();
       await tick();
     }
-    const hadResult = !$('#resultBlock').hidden;
-    recompute();
-    if (!hadResult && state.analysis && state.built && state.built.rows.length) {
+    await endStage();
+    recompute(true);
+    if (state.analysis && state.built && state.built.rows.length) {
       setTimeout(() => $('#resultBlock').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
     }
+  }
+
+  /* ---------- Scène "fusion en cours" ---------- */
+  const reduceMotion = () => window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let stageTimers = [];
+  let stageStart = 0;
+
+  function startStage() {
+    state.staging = true;
+    stageStart = Date.now();
+    renderResult();
+    const items = Array.from(document.querySelectorAll('#stageSteps li'));
+    items.forEach((li) => (li.className = ''));
+    stageTimers.forEach(clearTimeout);
+    stageTimers = [];
+    items.forEach((li, i) => {
+      stageTimers.push(setTimeout(() => {
+        if (i > 0) items[i - 1].className = 'done';
+        li.className = 'on';
+      }, i * 380));
+    });
+  }
+
+  async function endStage() {
+    const wait = reduceMotion() ? 0 : Math.max(0, 1700 - (Date.now() - stageStart));
+    await new Promise((r) => setTimeout(r, wait));
+    stageTimers.forEach(clearTimeout);
+    document.querySelectorAll('#stageSteps li').forEach((li) => (li.className = 'done'));
+    await new Promise((r) => setTimeout(r, reduceMotion() ? 0 : 260));
+    state.staging = false;
+  }
+
+  /* ---------- Exemple : 3 fichiers volontairement différents ---------- */
+  function demoFiles() {
+    const D = (y, m, d) => new Date(y, m - 1, d);
+    return [
+      { name: 'RH-Lomé.xlsx', sheets: [{ name: 'Personnel', rows: [
+        ['Liste du personnel – Lomé'], [],
+        ['Nom', 'Prénoms', 'Tel', 'Poste', "Date d'embauche", 'Sexe'],
+        ['AGBODJAN', 'Kofi', '90123456', 'Comptable', D(2020, 1, 15), 'M'],
+        ['ADJO', 'Ama', '91000000', 'Assistante RH', '03/02/2021', 'F'],
+        ['Total'],
+      ] }] },
+      { name: 'Équipe-Atakpamé.xlsx', sheets: [{ name: 'Feuil1', rows: [
+        ['Nom et Prénoms', 'Téléphone', 'Fonction', 'E-mail', 'Genre', 'Date entrée'],
+        ['ABALO Yao', '98001122', 'Informaticien', 'yao.abalo@exemple.tg', 'Masculin', '12 mars 2019'],
+        ['Agbodjan Kofi', '90 12 34 56', 'Comptable senior', 'kofi@exemple.tg', 'Homme', '15/01/2020'],
+      ] }] },
+      { name: 'Saisie-rapide.csv', sheets: [{ name: 'Feuil1', rows: [
+        ['KPETO Sena', '92000000', 'sena.kpeto@exemple.tg', 'F', 'Logisticienne'],
+        ['DOSSEH Mawuli', '93001234', 'mawuli@exemple.tg', 'M', 'Chauffeur'],
+      ] }] },
+    ];
+  }
+
+  async function loadDemo() {
+    state.files = [];
+    state.overrides = {};
+    state.separate = [];
+    renderFiles();
+    startStage();
+    demoFiles().forEach((f) => state.files.push({ id: ++uid, name: f.name, size: 4096, status: 'ok', error: null, sheets: f.sheets }));
+    renderFiles();
+    await endStage();
+    recompute(true);
+    setTimeout(() => $('#filesBlock').scrollIntoView({ behavior: 'smooth', block: 'start' }), 80);
   }
 
   /** Point d'entrée pour injecter des fichiers déjà lus (tests). */
   function addParsedFiles(list) {
     list.forEach((f) => state.files.push({ id: ++uid, name: f.name, size: f.size || 0, status: 'ok', error: null, sheets: f.sheets }));
     renderFiles();
-    recompute();
+    recompute(true);
   }
 
   /* ------------------------------------------------------------------ */
   /*  Fusion                                                             */
   /* ------------------------------------------------------------------ */
 
-  function recompute() {
+  function recompute(enter) {
     const ok = state.files.filter((f) => f.status === 'ok');
     if (!ok.length) {
       state.analysis = null;
@@ -208,26 +278,33 @@
     }
     state.analysis = MayaMerge.analyze(
       ok.map((f) => ({ id: f.id, name: f.name, sheets: f.sheets })),
-      { allSheets: state.allSheets }
+      { allSheets: state.allSheets, splitNames: state.splitNames, separate: state.separate }
     );
+    const keyToId = new Map(state.analysis.columns.map((c) => [c.key, c.id]));
     state.cols = state.analysis.columns.map((c) => {
       const o = state.overrides[c.key] || {};
-      return { id: c.id, key: c.key, label: o.label != null ? o.label : c.label, include: o.include != null ? o.include : true };
+      return {
+        id: c.id,
+        key: c.key,
+        label: o.label != null ? o.label : c.label,
+        include: o.include != null ? o.include : !c.autoHide,
+        into: o.into && keyToId.has(o.into) ? keyToId.get(o.into) : null,
+      };
     });
-    renderFiles(); // met à jour le détail de chaque fichier
-    rebuild(true);
+    renderFiles();
+    rebuild(true, enter);
   }
 
   function currentSettings() {
-    return Object.assign({ cols: state.cols }, { source: state.opts.source, numbering: state.opts.numbering, dedupe: state.opts.dedupe, sortBy: state.opts.sortBy, sortDir: state.opts.sortDir });
+    return { cols: state.cols, source: state.opts.source, numbering: state.opts.numbering, combine: state.opts.combine, clean: state.opts.clean, sortBy: state.opts.sortBy, sortDir: state.opts.sortDir };
   }
 
-  function rebuild(full) {
+  function rebuild(full, enter) {
     state.built = MayaMerge.build(state.analysis, currentSettings());
-    if (full) renderResult();
+    if (full) renderResult(enter);
     else {
       renderSummary();
-      renderPreview();
+      renderPreview(true);
       updateActions();
     }
   }
@@ -260,7 +337,7 @@
           } else meta = formatSize(f.size);
         }
         return (
-          '<li class="file' + (f.status === 'error' ? ' is-error' : '') + '">' +
+          '<li class="file' + (f.status === 'error' ? ' is-error' : '') + (f.status === 'reading' ? ' is-reading' : '') + '">' +
           '<span class="file-ext" aria-hidden="true">' + esc(ext) + '</span>' +
           '<div class="file-body"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div>' +
           '<div class="file-meta">' + meta + '</div></div>' +
@@ -275,12 +352,22 @@
   /*  Rendu : résultat                                                   */
   /* ------------------------------------------------------------------ */
 
-  function renderResult() {
+  function renderResult(enter) {
     const block = $('#resultBlock');
+    if (state.staging) {
+      block.hidden = false;
+      $('#stage').hidden = false;
+      $('#resultBody').hidden = true;
+      return;
+    }
+    $('#stage').hidden = true;
     block.hidden = !state.analysis;
+    $('#resultBody').hidden = !state.analysis;
     if (!state.analysis) return;
 
-    $('#optDedupe').checked = state.opts.dedupe;
+    $('#optCombine').checked = state.opts.combine;
+    $('#optClean').checked = state.opts.clean;
+    $('#optSplit').checked = state.splitNames;
     $('#optNumber').checked = state.opts.numbering;
     $('#optSource').checked = state.opts.source;
     $('#optSheets').checked = state.allSheets;
@@ -288,8 +375,14 @@
     renderSortOptions();
     renderColumns();
     renderSummary();
-    renderPreview();
+    renderPreview(true);
     updateActions();
+    if (enter) {
+      const body = $('#resultBody');
+      body.classList.remove('enter');
+      void body.offsetWidth;
+      body.classList.add('enter');
+    }
   }
 
   function renderSortOptions() {
@@ -319,51 +412,96 @@
     return '';
   }
 
+  function animateNumber(el, to) {
+    const from = Number(el.dataset.from || 0);
+    el.dataset.from = to;
+    if (reduceMotion() || from === to) {
+      el.textContent = to;
+      return;
+    }
+    const t0 = performance.now();
+    const dur = 700;
+    (function step(now) {
+      const k = Math.min(1, (now - t0) / dur);
+      const e = 1 - Math.pow(1 - k, 3);
+      el.textContent = Math.round(from + (to - from) * e);
+      if (k < 1) requestAnimationFrame(step);
+    })(t0);
+  }
+
+  const num = (n) => '<span class="cnt" data-to="' + n + '">' + n + '</span>';
+
   function renderSummary() {
     const a = state.analysis;
     const b = state.built;
     if (!a || !b) return;
-    const files = a.fileCount;
+    const s1 = (n, one, many) => (n > 1 ? many : one);
     const notes = [];
-    if (a.mergedColumns) notes.push(plural(a.mergedColumns, 'colonne regroupée', 'colonnes regroupées') + ' automatiquement');
-    if (b.removed) notes.push(plural(b.removed, 'doublon retiré', 'doublons retirés'));
     if (b.sortedBy.length) notes.push('trié par ' + b.sortedBy.join(', '));
     $('#summary').innerHTML =
-      '<strong>' + plural(files, 'fichier', 'fichiers') + '</strong> fusionnés en un tableau de <strong>' +
-      plural(b.rows.length, 'ligne', 'lignes') + '</strong> et <strong>' + plural(b.columnCount, 'colonne', 'colonnes') + '</strong>.' +
+      '<strong>' + num(a.fileCount) + s1(a.fileCount, ' fichier', ' fichiers') + '</strong> fusionnés en un tableau de <strong>' +
+      num(b.rows.length) + s1(b.rows.length, ' ligne', ' lignes') + '</strong> et <strong>' + num(b.columnCount) + s1(b.columnCount, ' colonne', ' colonnes') + '</strong>.' +
       (notes.length ? '<small>' + esc(notes.join(' · ')) + '</small>' : '');
+    document.querySelectorAll('#summary .cnt').forEach((el) => {
+      animateNumber(el, Number(el.dataset.to));
+    });
+
+    const chips = [];
+    if (a.mergedColumns) chips.push(['', plural(a.mergedColumns, 'colonne regroupée', 'colonnes regroupées') + ' malgré des noms différents']);
+    if (a.contentColumns) chips.push(['', plural(a.contentColumns, 'colonne reconnue', 'colonnes reconnues') + ' d’après son contenu']);
+    if (a.headerlessSheets) chips.push(['', plural(a.headerlessSheets, 'fichier', 'fichiers') + ' sans titres de colonnes' + (a.headerlessSheets > 1 ? ' compris' : ' compris')]);
+    if (a.splitCount && state.splitNames) chips.push(['', plural(a.splitCount, 'nom complet séparé', 'noms complets séparés') + ' en Nom et Prénom']);
+    if (b.combinedRows) chips.push(['', plural(b.combinedRows, 'personne', 'personnes') + ' trouvée' + (b.combinedRows > 1 ? 's' : '') + ' dans plusieurs fichiers']);
+    else if (b.absorbed) chips.push(['', plural(b.absorbed, 'doublon retiré', 'doublons retirés')]);
+    if (b.conflictCount) chips.push(['warn', plural(b.conflictCount, 'valeur différente', 'valeurs différentes') + ' à vérifier']);
+    $('#insights').innerHTML = chips.map(([c, t]) => '<li class="' + c + '">' + (c === 'warn' ? '<span class="dot"></span>' : '') + esc(t) + '</li>').join('');
   }
+
+  function colsSummaryText() {
+    const shown = state.cols.filter((c) => c.include && !c.into).length;
+    return 'Carte des colonnes : ' + shown + ' affichée' + (shown > 1 ? 's' : '') + ' sur ' + state.cols.length;
+  }
+
+  const REASON_TXT = { contenu: 'reconnue d’après son contenu', proche: 'rapprochée (intitulé proche)', 'déduit': 'déduite du nom complet' };
 
   function renderColumns() {
     const a = state.analysis;
     const meta = new Map(a.columns.map((c) => [c.id, c]));
     const total = a.fileCount;
-    const shown = state.cols.filter((c) => c.include).length;
-    $('#colsSummary').textContent = 'Colonnes : ' + shown + ' sur ' + state.cols.length + ' affichées';
+    $('#colsSummary').textContent = colsSummaryText();
 
     $('#colsList').innerHTML = state.cols
       .map((c, i) => {
         const m = meta.get(c.id);
-        const info =
-          m.variants.length > 1
-            ? '<span class="dot"></span>Regroupe : ' + esc(m.variants.join(', '))
-            : 'Présente dans ' + m.fileCount + ' fichier' + (m.fileCount > 1 ? 's' : '') + ' sur ' + total;
+        const chips = m.variants
+          .map((v, vi) => {
+            const k = m.variantKeys[vi];
+            const cut = m.variants.length > 1 && k ? '<button type="button" data-act="detach" data-vk="' + esc(k) + '" title="Séparer « ' + esc(v) + ' » de cette colonne" aria-label="Séparer ' + esc(v) + '">✂</button>' : '';
+            return '<span class="chip' + (cut ? '' : ' solo') + '">' + esc(v) + cut + '</span>';
+          })
+          .join('');
+        const badges = m.reasons.filter((r) => REASON_TXT[r]).map((r) => '<span class="badge">' + esc(REASON_TXT[r]) + '</span>').join('');
+        const others = state.cols.filter((x) => x.id !== c.id && !x.into);
+        const select =
+          '<div class="into"><label for="into-' + c.id + '">Rattacher à</label><select id="into-' + c.id + '" data-act="into"><option value="">— (colonne séparée)</option>' +
+          others.map((x) => '<option value="' + x.id + '"' + (c.into === x.id ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('') + '</select></div>';
         return (
-          '<li class="col-row' + (c.include ? '' : ' is-off') + '" data-id="' + c.id + '">' +
+          '<li class="col-row' + (c.include ? '' : ' is-off') + '" data-id="' + c.id + '" style="animation-delay:' + Math.min(i, 12) * 25 + 'ms">' +
           '<input type="checkbox" data-act="include" ' + (c.include ? 'checked' : '') + ' aria-label="Afficher la colonne ' + esc(c.label) + '">' +
           '<input type="text" class="col-label" data-act="label" value="' + esc(c.label) + '" aria-label="Nom de la colonne" autocomplete="off">' +
           '<div class="col-move">' +
           '<button type="button" class="icon-btn" data-act="up" aria-label="Monter" ' + (i === 0 ? 'disabled' : '') + '>↑</button>' +
           '<button type="button" class="icon-btn" data-act="down" aria-label="Descendre" ' + (i === state.cols.length - 1 ? 'disabled' : '') + '>↓</button>' +
           '</div>' +
-          '<div class="col-info">' + info + '</div>' +
+          '<div class="col-info"><div class="chips">' + chips + badges + '</div>' +
+          '<span>Présente dans ' + m.fileCount + ' fichier' + (m.fileCount > 1 ? 's' : '') + ' sur ' + total + '</span>' + select + '</div>' +
           '</li>'
         );
       })
       .join('');
   }
 
-  function renderPreview() {
+  function renderPreview(animate) {
     const b = state.built;
     const box = $('#sheet');
     if (!b || !b.rows.length) {
@@ -377,21 +515,30 @@
     b.headers.forEach((_, j) => (html += '<th scope="col">' + colLetter(j) + '</th>'));
     html += '</tr><tr class="heads"><th class="rn"></th>';
     b.headers.forEach((h, j) => {
-      const v = b.variantsList[j];
-      const dot = b.mergedFlags[j] ? '<span class="merged-dot" title="Regroupe : ' + esc(v.join(', ')) + '"></span>' : '';
+      const m = b.headMeta[j];
+      const dot = m.merged ? '<span class="merged-dot" title="Regroupe : ' + esc(m.variants.join(', ')) + '"></span>' : '';
       html += '<th scope="col">' + esc(h) + dot + '</th>';
     });
     html += '</tr></thead><tbody>';
     rows.forEach((r, i) => {
-      html += '<tr><td class="rn">' + (i + 1) + '</td>';
+      html += '<tr style="--i:' + i + '"><td class="rn">' + (i + 1) + '</td>';
       r.forEach((v, j) => {
         const t = formatCell(v);
-        html += '<td' + (typeof v === 'number' ? ' class="num"' : '') + ' title="' + esc(t) + '">' + esc(t) + '</td>';
+        const alt = b.conflictMap[i + ':' + j];
+        html += '<td' + (alt ? ' class="conf"' : '') + ' data-alt="' + (alt ? esc(alt) : '') + '" title="' + esc(alt ? t + ' — autre valeur : ' + alt : t) + '">' + esc(t) + '</td>';
       });
       html += '</tr>';
     });
     html += '</tbody></table>';
     box.innerHTML = html;
+    if (animate && !reduceMotion()) {
+      box.classList.remove('cascade');
+      void box.offsetWidth;
+      box.classList.add('cascade');
+    }
+    $('#fbRef').textContent = 'A1';
+    $('#fbVal').textContent = 'Touchez une cellule pour voir son contenu';
+    $('#fbVal').classList.remove('has');
 
     $('#sheetNote').textContent =
       b.rows.length > PREVIEW_ROWS
@@ -494,6 +641,11 @@
             const cell = row.getCell(j);
             cell.border = { bottom: border };
             if (zebra) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF3F8F5' } };
+            const alt = b.conflictMap[i - 2 + ':' + (j - 1)];
+            if (alt) {
+              cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF3D1' } };
+              cell.note = 'Autre valeur dans un autre fichier : ' + alt;
+            }
           }
         }
         ws.autoFilter = { from: { row: 1, column: 1 }, to: { row: 1, column: b.headers.length } };
@@ -519,11 +671,32 @@
         download(new Blob([out], { type: mime }), name);
       }
       toast('Fichier Excel prêt.');
+      burst(btn);
     } catch (e) {
       toast('Impossible de créer le fichier. Vérifiez votre connexion Internet et réessayez.', true);
     } finally {
       btn.textContent = label;
       updateActions();
+    }
+  }
+
+  function burst(anchor) {
+    if (reduceMotion()) return;
+    const r = anchor.getBoundingClientRect();
+    const colors = ['#0a7f53', '#ffc233', '#2bc48a', '#0a3d2e'];
+    for (let i = 0; i < 22; i++) {
+      const el = document.createElement('i');
+      el.className = 'confetti';
+      const ang = Math.random() * Math.PI - Math.PI;
+      const dist = 60 + Math.random() * 120;
+      el.style.left = r.left + r.width / 2 + 'px';
+      el.style.top = r.top + r.height / 2 + 'px';
+      el.style.background = colors[i % colors.length];
+      el.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
+      el.style.setProperty('--dy', Math.sin(ang) * dist - 20 + 'px');
+      el.style.setProperty('--rot', Math.random() * 360 + 'deg');
+      document.body.appendChild(el);
+      setTimeout(() => el.remove(), 1000);
     }
   }
 
@@ -537,6 +710,7 @@
     // BOM + point-virgule : s'ouvre correctement dans Excel en français
     download(new Blob(['\uFEFF' + lines.join('\r\n')], { type: 'text/csv;charset=utf-8' }), 'MayaExcel-fusion-' + stamp() + '.csv');
     toast('Fichier CSV prêt.');
+    burst($('#dlCsv'));
   }
 
   /* ------------------------------------------------------------------ */
@@ -545,6 +719,14 @@
 
   const fileInput = $('#fileInput');
   const drop = $('#drop');
+
+  function swapTitle(text) {
+    const t = $('.drop-title');
+    t.textContent = text;
+    t.classList.remove('swap');
+    void t.offsetWidth;
+    t.classList.add('swap');
+  }
 
   function openPicker() {
     fileInput.click();
@@ -571,12 +753,14 @@
     window.addEventListener(ev, (e) => {
       if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
       e.preventDefault();
+      if (!drop.classList.contains('is-over')) swapTitle('Relâchez pour fusionner');
       drop.classList.add('is-over');
     })
   );
   ['dragleave', 'drop'].forEach((ev) =>
     window.addEventListener(ev, (e) => {
       if (ev === 'dragleave' && e.relatedTarget) return;
+      if (drop.classList.contains('is-over')) swapTitle('Déposez vos fichiers Excel ici');
       drop.classList.remove('is-over');
     })
   );
@@ -589,6 +773,7 @@
   $('#clearBtn').addEventListener('click', () => {
     state.files = [];
     state.overrides = {};
+    state.separate = [];
     state.opts.sortBy = 'auto';
     recompute();
     renderFiles();
@@ -599,9 +784,15 @@
     const btn = e.target.closest('[data-remove]');
     if (!btn) return;
     const id = Number(btn.dataset.remove);
-    state.files = state.files.filter((f) => f.id !== id);
-    recompute();
-    renderFiles();
+    const li = btn.closest('.file');
+    const done = () => {
+      state.files = state.files.filter((f) => f.id !== id);
+      recompute();
+      renderFiles();
+    };
+    if (reduceMotion() || !li) return done();
+    li.classList.add('leaving');
+    setTimeout(done, 230);
   });
 
   $('#sortBy').addEventListener('change', (e) => {
@@ -614,9 +805,17 @@
     $('#sortDir').textContent = state.opts.sortDir === 'asc' ? 'A → Z' : 'Z → A';
     rebuild(false);
   });
-  $('#optDedupe').addEventListener('change', (e) => {
-    state.opts.dedupe = e.target.checked;
+  $('#optCombine').addEventListener('change', (e) => {
+    state.opts.combine = e.target.checked;
     rebuild(false);
+  });
+  $('#optClean').addEventListener('change', (e) => {
+    state.opts.clean = e.target.checked;
+    rebuild(false);
+  });
+  $('#optSplit').addEventListener('change', (e) => {
+    state.splitNames = e.target.checked;
+    recompute();
   });
   $('#optNumber').addEventListener('change', (e) => {
     state.opts.numbering = e.target.checked;
@@ -632,7 +831,8 @@
   });
 
   function rememberCol(c) {
-    state.overrides[c.key] = { label: c.label, include: c.include };
+    const prev = state.overrides[c.key] || {};
+    state.overrides[c.key] = { label: c.label, include: c.include, into: prev.into };
   }
 
   const colsList = $('#colsList');
@@ -652,14 +852,30 @@
       rememberCol(c);
       row.classList.toggle('is-off', !c.include);
       renderSortOptions();
-      const shown = state.cols.filter((x) => x.include).length;
-      $('#colsSummary').textContent = 'Colonnes : ' + shown + ' sur ' + state.cols.length + ' affichées';
+      $('#colsSummary').textContent = colsSummaryText();
       rebuild(false);
     } else if (e.target.dataset.act === 'label') {
       renderSortOptions();
+    } else if (e.target.dataset.act === 'into') {
+      const c = state.cols.find((x) => x.id === e.target.closest('.col-row').dataset.id);
+      const target = state.cols.find((x) => x.id === e.target.value);
+      const prev = state.overrides[c.key] || { label: c.label, include: c.include };
+      state.overrides[c.key] = Object.assign({}, prev, { into: target ? target.key : null });
+      c.into = target ? target.id : null;
+      renderColumns();
+      renderSortOptions();
+      rebuild(false);
     }
   });
   colsList.addEventListener('click', (e) => {
+    const cut = e.target.closest('[data-act="detach"]');
+    if (cut) {
+      const vk = cut.dataset.vk;
+      if (!state.separate.includes(vk)) state.separate.push(vk);
+      toast('Colonne séparée.');
+      recompute();
+      return;
+    }
     const btn = e.target.closest('[data-act="up"],[data-act="down"]');
     if (!btn) return;
     const id = btn.closest('.col-row').dataset.id;
@@ -672,6 +888,34 @@
     const again = colsList.querySelector('[data-id="' + id + '"] [data-act="' + btn.dataset.act + '"]');
     if (again && !again.disabled) again.focus();
   });
+
+  $('#demoBtn').addEventListener('click', (e) => {
+    e.stopPropagation();
+    loadDemo();
+  });
+
+  // Barre de formule façon tableur
+  $('#sheet').addEventListener('click', (e) => {
+    const td = e.target.closest('td:not(.rn)');
+    if (!td) return;
+    const prev = $('#sheet td.sel');
+    if (prev) prev.classList.remove('sel');
+    td.classList.add('sel');
+    const tr = td.parentElement;
+    const col = td.cellIndex - 1;
+    const row = Array.prototype.indexOf.call(tr.parentElement.children, tr) + 1;
+    $('#fbRef').textContent = colLetter(col) + row;
+    const alt = td.dataset.alt;
+    const fv = $('#fbVal');
+    fv.textContent = (td.textContent || '(vide)') + (alt ? '   ·   autre valeur : ' + alt : '');
+    fv.classList.add('has');
+  });
+
+  // En-tête qui se détache au défilement
+  const topBar = $('#top');
+  const onScroll = () => topBar.classList.toggle('is-stuck', window.scrollY > 6);
+  window.addEventListener('scroll', onScroll, { passive: true });
+  onScroll();
 
   $('#dlXlsx').addEventListener('click', exportXlsx);
   $('#dlCsv').addEventListener('click', exportCsv);

@@ -1,0 +1,9 @@
+{
+  "name": "mayaexcel",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Fusion intelligente de fichiers Excel",
+  "scripts": {
+    "build": "node scripts/build.mjs"
+  }
+}

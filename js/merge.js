@@ -1,14 +1,15 @@
 /*
- * MayaExcel – moteur de fusion
+ * MayaExcel – moteur de fusion (v2)
  * Aucune dépendance : fonctionne dans le navigateur et sous Node (tests).
  *
- * 1. analyze(files)  → lit des tableaux bruts (lignes/colonnes), repère la ligne d'en-têtes,
- *                      rapproche les colonnes qui veulent dire la même chose ("Tel", "Téléphone",
- *                      "Phone"…) et produit une liste d'enregistrements unifiés.
- * 2. build(analysis, réglages) → applique l'ordre des colonnes, les doublons, le tri, etc.
+ * analyze(files)  → lit les tableaux bruts, repère les en-têtes (ou leur absence), rapproche les
+ *                   colonnes par leur intitulé ET par leur contenu, nettoie les types (dates, nombres),
+ *                   sépare "Nom et Prénoms" quand d'autres fichiers ont Nom / Prénom à part.
+ * build(analysis) → applique les réglages : rattachements manuels, harmonisation, regroupement des
+ *                   lignes d'une même personne, tri, numérotation.
  *
- * Dates : les objets Date produits ici représentent l'heure "murale" lue dans Excel,
- * exprimée en UTC (on les lit et on les écrit toujours avec les getters/setters UTC).
+ * Dates : les objets Date représentent l'heure "murale" lue dans Excel, exprimée en UTC
+ * (toujours lus et écrits avec les accesseurs UTC).
  */
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory();
@@ -16,20 +17,15 @@
 })(typeof self !== 'undefined' ? self : this, function () {
   'use strict';
 
-  /* ------------------------------------------------------------------ */
-  /*  Normalisation des intitulés                                        */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
+  /*  Intitulés                                                          */
+  /* ================================================================== */
 
   const STOP = new Set(['de', 'du', 'des', 'd', 'la', 'le', 'les', 'l', 'the', 'of', 'au', 'aux', 'en']);
   const NUM_WORDS = new Set(['n', 'no', 'num', 'numero', 'nbr']);
 
-  function stripAccents(s) {
-    return String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
-  }
-
-  function singular(w) {
-    return w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w;
-  }
+  const stripAccents = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
+  const singular = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
 
   function tokens(text) {
     let t = stripAccents(text)
@@ -40,7 +36,6 @@
       .filter(Boolean)
       .filter((w) => !STOP.has(w))
       .map(singular);
-    // "Numéro de téléphone" → "telephone"
     if (t.length > 1) {
       const rest = t.filter((w) => !NUM_WORDS.has(w));
       if (rest.length) t = rest;
@@ -67,41 +62,52 @@
     return prev[b.length];
   }
 
-  function similarity(a, b) {
+  const similarity = (a, b) => {
     const max = Math.max(a.length, b.length);
     return max ? 1 - levenshtein(a, b) / max : 1;
-  }
+  };
 
   const digitsOf = (s) => (s.match(/\d+/g) || []).join('-');
 
-  /** Deux intitulés (déjà normalisés) sont-ils "quasi identiques" ? */
   function fuzzyMatch(a, b) {
     if (a.length < 5 || b.length < 5) return false;
     if (digitsOf(a) !== digitsOf(b)) return false; // "Adresse 1" ≠ "Adresse 2"
     return similarity(a, b) >= 0.86;
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Dictionnaire de synonymes (FR / EN) – les plus courants en RH      */
-  /* ------------------------------------------------------------------ */
+  function jaccardTokens(ta, tb) {
+    const A = new Set(ta);
+    const B = new Set(tb);
+    let inter = 0;
+    A.forEach((x) => B.has(x) && inter++);
+    const union = A.size + B.size - inter;
+    return { score: union ? inter / union : 0, union };
+  }
+
+  const GENERIC_RE = /^(colonne|column|col|champ|field|unnamed|sans titre|untitled)[\s:_-]*\d*$/;
+  const isGenericHeader = (text) => GENERIC_RE.test(stripAccents(text).trim());
+
+  /* ================================================================== */
+  /*  Dictionnaire de synonymes (FR / EN)                                */
+  /* ================================================================== */
 
   const GROUPS = [
     ['matricule', 'Matricule', ['matricule', 'id', 'identifiant', 'id employe', 'employe id', 'employee id', 'code employe', 'employee number', 'numero employe', 'numero matricule', 'badge']],
     ['nom', 'Nom', ['nom', 'nom de famille', 'last name', 'lastname', 'surname', 'family name']],
     ['prenom', 'Prénom', ['prenom', 'prenoms', 'first name', 'firstname', 'given name']],
-    ['nomcomplet', 'Nom complet', ['nom complet', 'nom et prenom', 'nom prenom', 'nom et prenoms', 'noms et prenoms', 'full name', 'fullname', 'name', 'employe', 'employee', 'agent', 'salarie', 'collaborateur', 'nom employe', 'employee name', 'nom agent']],
+    ['nomcomplet', 'Nom complet', ['nom complet', 'nom et prenom', 'nom prenom', 'nom et prenoms', 'noms et prenoms', 'full name', 'fullname', 'name', 'employe', 'employee', 'agent', 'salarie', 'collaborateur', 'nom employe', 'employee name', 'nom agent', 'identite', 'beneficiaire']],
     ['sexe', 'Sexe', ['sexe', 'genre', 'gender', 'sex']],
-    ['naissance', 'Date de naissance', ['date de naissance', 'date naissance', 'ne le', 'nee le', 'birth date', 'birthdate', 'date of birth', 'dob', 'naissance']],
+    ['naissance', 'Date de naissance', ['date de naissance', 'date naissance', 'date naiss', 'ne le', 'nee le', 'birth date', 'birthdate', 'date of birth', 'dob', 'naissance']],
     ['lieunaissance', 'Lieu de naissance', ['lieu de naissance', 'lieu naissance', 'place of birth', 'birthplace']],
-    ['telephone', 'Téléphone', ['telephone', 'tel', 'tel mobile', 'telephone mobile', 'phone', 'phone number', 'mobile', 'portable', 'contact', 'gsm', 'cellulaire']],
+    ['telephone', 'Téléphone', ['telephone', 'tel', 'tel mobile', 'telephone mobile', 'tel portable', 'phone', 'phone number', 'mobile', 'portable', 'contact', 'gsm', 'cellulaire', 'whatsapp']],
     ['email', 'Email', ['email', 'e mail', 'mail', 'courriel', 'adresse email', 'adresse mail', 'adresse e mail', 'email address']],
     ['adresse', 'Adresse', ['adresse', 'address', 'adresse postale', 'domicile', 'residence', 'adresse domicile', 'lieu de residence']],
     ['ville', 'Ville', ['ville', 'city', 'commune', 'localite']],
     ['pays', 'Pays', ['pays', 'country']],
     ['nationalite', 'Nationalité', ['nationalite', 'nationality']],
-    ['poste', 'Poste', ['poste', 'fonction', 'job title', 'emploi', 'intitule du poste', 'intitule poste', 'metier', 'profession']],
+    ['poste', 'Poste', ['poste', 'fonction', 'job title', 'emploi', 'intitule du poste', 'intitule poste', 'metier', 'profession', 'poste occupe', 'fonction occupee']],
     ['service', 'Service', ['service', 'departement', 'department']],
-    ['dateembauche', "Date d'embauche", ['date embauche', 'date d embauche', 'date d entree', 'date entree', 'hire date', 'start date', 'date de recrutement', 'date recrutement', 'date de prise de service', 'date prise de service']],
+    ['dateembauche', "Date d'embauche", ['date embauche', 'date d embauche', 'date d entree', 'date entree', 'hire date', 'start date', 'date de recrutement', 'date recrutement', 'date de prise de service', 'date prise de service', 'date d engagement', 'date engagement']],
     ['salaire', 'Salaire', ['salaire', 'salary', 'remuneration', 'salaire de base', 'base salary']],
     ['statut', 'Statut', ['statut', 'status']],
     ['matrimonial', 'Situation matrimoniale', ['situation matrimoniale', 'etat civil', 'situation familiale', 'marital status']],
@@ -113,16 +119,15 @@
   ];
 
   const GROUP_LABEL = {};
-  const GROUP_KEYS = []; // [{key, group}] pour la recherche floue
+  const GROUP_KEYS = [];
   const GROUP_MAP = new Map();
   GROUPS.forEach(([id, label, names]) => {
     GROUP_LABEL[id] = label;
     names.forEach((n) => {
       const t = tokens(n);
       const k = keyOf(t);
-      const sk = sortedKeyOf(t);
       if (!GROUP_MAP.has(k)) GROUP_MAP.set(k, id);
-      if (!GROUP_MAP.has('~' + sk)) GROUP_MAP.set('~' + sk, id);
+      if (!GROUP_MAP.has('~' + sortedKeyOf(t))) GROUP_MAP.set('~' + sortedKeyOf(t), id);
       GROUP_KEYS.push({ key: k, group: id });
     });
   });
@@ -130,9 +135,8 @@
   function resolveGroup(t) {
     if (!t.length) return null;
     const k = keyOf(t);
-    const sk = sortedKeyOf(t);
     if (GROUP_MAP.has(k)) return GROUP_MAP.get(k);
-    if (GROUP_MAP.has('~' + sk)) return GROUP_MAP.get('~' + sk);
+    if (GROUP_MAP.has('~' + sortedKeyOf(t))) return GROUP_MAP.get('~' + sortedKeyOf(t));
     for (const g of GROUP_KEYS) if (fuzzyMatch(k, g.key)) return g.group;
     return null;
   }
@@ -146,21 +150,33 @@
     return s;
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Valeurs                                                            */
-  /* ------------------------------------------------------------------ */
+  const PHONE_HINTS = new Set(['tel', 'phone', 'mobile', 'contact', 'portable', 'gsm', 'whatsapp', 'cell', 'cellulaire', 'numero', 'num']);
+
+  /* ================================================================== */
+  /*  Valeurs : nettoyage et reconnaissance                              */
+  /* ================================================================== */
 
   const ERROR_RE = /^#(N\/A|REF!|VALUE!|DIV\/0!|NAME\?|NULL!|NUM!)/i;
+  const EMAIL_RE = /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/;
+  const DATE_DMY = /^(\d{1,2})[\/.\-](\d{1,2})[\/.\-](\d{2}|\d{4})$/;
+  const DATE_ISO = /^(\d{4})-(\d{2})-(\d{2})(?:[T ].*)?$/;
+  const DATE_TXT = /^(\d{1,2})(?:er)?\s+([a-zA-ZÀ-ÿ]+)\.?\s+(\d{4})$/;
+  const MONTHS = {
+    janvier: 1, jan: 1, janv: 1, fevrier: 2, fev: 2, fevr: 2, mars: 3, mar: 3, avril: 4, avr: 4, mai: 5, juin: 6,
+    juillet: 7, juil: 7, aout: 8, septembre: 9, sept: 9, sep: 9, octobre: 10, oct: 10, novembre: 11, nov: 11,
+    decembre: 12, dec: 12, january: 1, february: 2, march: 3, april: 4, may: 5, june: 6, july: 7, august: 8,
+    october: 10, december: 12,
+  };
+  const MALE = new Set(['m', 'h', 'masculin', 'homme', 'male', 'masc', 'garcon']);
+  const FEMALE = new Set(['f', 'feminin', 'femme', 'female', 'fem', 'fille']);
 
-  function isEmpty(v) {
-    return v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
-  }
+  const isEmpty = (v) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
 
   function cleanValue(v) {
     if (isEmpty(v)) return null;
     if (v instanceof Date) {
       if (isNaN(v.getTime())) return null;
-      const r = new Date(Math.round(v.getTime() / 60000) * 60000); // arrondi à la minute
+      const r = new Date(Math.round(v.getTime() / 60000) * 60000);
       return new Date(Date.UTC(r.getFullYear(), r.getMonth(), r.getDate(), r.getHours(), r.getMinutes()));
     }
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
@@ -168,6 +184,82 @@
     const s = String(v).replace(/[\s\u00a0]+/g, ' ').trim();
     if (!s || ERROR_RE.test(s)) return null;
     return s;
+  }
+
+  function mkDate(y, m, d) {
+    if (m < 1 || m > 12 || d < 1 || d > 31 || y < 1900 || y > 2100) return null;
+    const dt = new Date(Date.UTC(y, m - 1, d));
+    return dt.getUTCMonth() === m - 1 ? dt : null;
+  }
+
+  function parseDateText(s) {
+    if (typeof s !== 'string') return null;
+    const t = s.trim();
+    let m = DATE_ISO.exec(t);
+    if (m) return mkDate(+m[1], +m[2], +m[3]);
+    m = DATE_DMY.exec(t);
+    if (m) {
+      let d = +m[1];
+      let mo = +m[2];
+      let y = +m[3];
+      if (m[3].length === 2) y += y <= 30 ? 2000 : 1900;
+      if (mo > 12 && d <= 12) [d, mo] = [mo, d];
+      return mkDate(y, mo, d);
+    }
+    m = DATE_TXT.exec(t);
+    if (m) {
+      const mo = MONTHS[stripAccents(m[2])];
+      return mo ? mkDate(+m[3], mo, +m[1]) : null;
+    }
+    return null;
+  }
+
+  function phoneDigits(v) {
+    let s;
+    if (typeof v === 'number') {
+      if (!Number.isInteger(v) || v < 0) return null;
+      s = String(v);
+    } else if (typeof v === 'string') {
+      const t = v.trim();
+      if (DATE_DMY.test(t) || DATE_ISO.test(t)) return null;
+      if (!/^\+?[\d\s.\-()\/]+$/.test(t)) return null;
+      s = t.replace(/\D/g, '');
+    } else return null;
+    return s.length >= 8 && s.length <= 15 ? s : null;
+  }
+
+  function parseNumberText(v) {
+    if (typeof v === 'number') return v;
+    if (typeof v !== 'string') return null;
+    let s = v.replace(/\b(fcfa|f cfa|cfa|xof|xaf|eur|euros?|usd)\b/gi, '').replace(/[€$]/g, '').replace(/[\s\u00a0\u202f]/g, '');
+    if (!s || !/^[-+]?[\d.,]+$/.test(s)) return null;
+    if (/^\d{1,3}(\.\d{3})+$/.test(s)) s = s.replace(/\./g, '');
+    else if (/^\d{1,3}(,\d{3})+$/.test(s)) s = s.replace(/,/g, '');
+    else {
+      const lc = s.lastIndexOf(',');
+      const ld = s.lastIndexOf('.');
+      if (lc > -1 && ld > -1) s = lc > ld ? s.replace(/\./g, '').replace(',', '.') : s.replace(/,/g, '');
+      else if (lc > -1) s = s.replace(',', '.');
+    }
+    const n = Number(s);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  const sexKey = (v) => stripAccents(v).replace(/[.\s]/g, '');
+  const isSexValue = (v) => typeof v === 'string' && (MALE.has(sexKey(v)) || FEMALE.has(sexKey(v)));
+
+  function normalizeSex(v) {
+    if (typeof v !== 'string') return v;
+    const k = sexKey(v);
+    if (MALE.has(k)) return 'Masculin';
+    if (FEMALE.has(k)) return 'Féminin';
+    return v;
+  }
+
+  function isNameLike(v) {
+    if (typeof v !== 'string' || !/^[A-Za-zÀ-ÿ'’.\- ]{3,60}$/.test(v)) return false;
+    const parts = v.split(' ').filter(Boolean);
+    return parts.length >= 2 && parts.length <= 5 && parts.filter((p) => p.replace(/[.'’-]/g, '').length >= 2).length >= parts.length / 2;
   }
 
   function dateToText(d) {
@@ -181,9 +273,82 @@
     return String(v).replace(/[\s\u00a0]+/g, ' ').trim();
   }
 
-  /* ------------------------------------------------------------------ */
-  /*  Lecture d'une feuille : où sont les en-têtes ?                     */
-  /* ------------------------------------------------------------------ */
+  const signature = (v) => {
+    if (v === undefined || v === null) return '';
+    if (v instanceof Date) return 'd' + v.getTime();
+    return String(v).toLowerCase();
+  };
+
+  /** Statistiques sur le contenu d'une colonne. */
+  function profile(vals) {
+    const n = vals.length;
+    const c = { email: 0, phone: 0, date: 0, sex: 0, number: 0, name: 0 };
+    const distinct = new Set();
+    vals.forEach((v) => {
+      if (typeof v === 'string' && EMAIL_RE.test(v)) c.email++;
+      if (phoneDigits(v)) c.phone++;
+      if (v instanceof Date || parseDateText(v)) c.date++;
+      if (typeof v === 'number') c.number++;
+      if (isSexValue(v)) c.sex++;
+      if (isNameLike(v)) c.name++;
+      if (distinct.size < 60) distinct.add(signature(v));
+    });
+    const r = {};
+    Object.keys(c).forEach((k) => (r[k] = n ? c[k] / n : 0));
+    r.n = n;
+    r.distinct = distinct;
+    return r;
+  }
+
+  /** "AGBODJAN Kofi Jean" → {nom, prenom}. */
+  function splitName(full) {
+    const s = String(full).replace(/\s+/g, ' ').trim();
+    if (!s) return { nom: '', prenom: '' };
+    if (s.includes(',')) {
+      const [a, ...b] = s.split(',');
+      return { nom: a.trim(), prenom: b.join(' ').trim() };
+    }
+    const parts = s.split(' ');
+    if (parts.length === 1) return { nom: s, prenom: '' };
+    const PART = new Set(['de', 'du', 'des', 'van', 'von', 'le', 'la', 'el', 'al', 'ben', 'ibn']);
+    const isUp = (w) => {
+      const L = w.replace(/[^A-Za-zÀ-ÿ]/g, '');
+      return L.length >= 2 && L === L.toUpperCase() && L !== L.toLowerCase();
+    };
+    const ups = parts.map(isUp);
+    if (ups.every(Boolean)) return { nom: parts[0], prenom: parts.slice(1).join(' ') };
+    if (ups.some(Boolean)) {
+      let i = 0;
+      while (i < parts.length && (ups[i] || (PART.has(parts[i].toLowerCase()) && i < parts.length - 1 && ups[i + 1]))) i++;
+      if (i > 0 && i < parts.length) return { nom: parts.slice(0, i).join(' '), prenom: parts.slice(i).join(' ') };
+      let j = parts.length;
+      while (j > 0 && ups[j - 1]) j--;
+      if (j > 0 && j < parts.length) return { nom: parts.slice(j).join(' '), prenom: parts.slice(0, j).join(' ') };
+    }
+    return { nom: parts[0], prenom: parts.slice(1).join(' ') };
+  }
+
+  const titleCase = (s) => s.toLowerCase().replace(/(^|[\s\-'’])([a-zà-ÿ])/g, (m, p, c) => p + c.toUpperCase());
+
+  /* ================================================================== */
+  /*  Lecture d'une feuille : où sont les en-têtes (s'il y en a) ?       */
+  /* ================================================================== */
+
+  function looksLikeData(row) {
+    const cells = (row || []).filter((c) => !isEmpty(c));
+    if (cells.length < 2) return false;
+    let known = false;
+    let dataish = false;
+    let nums = 0;
+    cells.forEach((c) => {
+      if (typeof c === 'string' && resolveGroup(tokens(c))) known = true;
+      if (c instanceof Date) dataish = true;
+      if (typeof c === 'number') nums++;
+      if (EMAIL_RE.test(String(c).trim()) || phoneDigits(c)) dataish = true;
+    });
+    if (known) return false;
+    return dataish || nums / cells.length >= 0.5;
+  }
 
   function readSheet(rows) {
     if (!rows || !rows.length) return null;
@@ -205,93 +370,149 @@
     if (headerRow < 0) headerRow = stat.findIndex((s) => s.filled > 0);
     if (headerRow < 0) return null;
 
-    // Une feuille sans aucune ligne de données sous l'en-tête est ignorée.
+    // La "ligne d'en-têtes" est peut-être déjà une ligne de données (fichier sans titres de colonnes).
+    const headerless = looksLikeData(rows[headerRow]);
+    const start = headerless ? headerRow : headerRow + 1;
+
     let hasData = false;
-    for (let r = headerRow + 1; r < rows.length && !hasData; r++) {
-      hasData = (rows[r] || []).some((c) => !isEmpty(c));
-    }
+    for (let r = start; r < rows.length && !hasData; r++) hasData = (rows[r] || []).some((c) => !isEmpty(c));
     if (!hasData) return null;
 
     const head = rows[headerRow] || [];
     let width = head.length;
-    for (let r = headerRow + 1; r < rows.length; r++) width = Math.max(width, (rows[r] || []).length);
+    for (let r = start; r < rows.length; r++) width = Math.max(width, (rows[r] || []).length);
 
     const headers = [];
     for (let j = 0; j < width; j++) {
-      let text = isEmpty(head[j]) ? '' : headerText(head[j]);
+      let text = !headerless && !isEmpty(head[j]) ? headerText(head[j]) : '';
       if (!text) {
-        let hasData = false;
-        for (let r = headerRow + 1; r < rows.length && !hasData; r++) hasData = !isEmpty((rows[r] || [])[j]);
-        if (!hasData) continue;
+        let any = false;
+        for (let r = start; r < rows.length && !any; r++) any = !isEmpty((rows[r] || [])[j]);
+        if (!any) continue;
         text = 'Colonne ' + (j + 1);
       }
       headers.push({ idx: j, text });
     }
-    return headers.length ? { headerRow, headers } : null;
+    return headers.length ? { headerRow, headerless, start, headers } : null;
   }
 
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
   /*  Analyse                                                            */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
 
-  function baseName(name) {
-    return String(name).replace(/\.[^.]+$/, '');
-  }
+  const baseName = (name) => String(name).replace(/\.[^.]+$/, '');
 
   /**
-   * @param files  [{id?, name, error?, sheets:[{name, rows:any[][]}]}]
-   * @param options {allSheets:boolean}
+   * @param files   [{id?, name, error?, sheets:[{name, rows:any[][]}]}]
+   * @param options {allSheets, splitNames, separate:[clés d'intitulés à ne jamais regrouper]}
    */
   function analyze(files, options) {
-    const opts = Object.assign({ allSheets: true }, options || {});
+    const opts = Object.assign({ allSheets: true, splitNames: true, separate: [] }, options || {});
+    const separate = new Set(opts.separate || []);
     const cols = [];
     const byId = new Map();
     const order = [];
     const records = [];
     const report = [];
     let seq = 0;
+    let genSeq = 0;
+    let headerlessSheets = 0;
 
-    function createColumn(text, t, group, used) {
-      let key = group || keyOf(t) || stripAccents(text);
-      let label = group ? GROUP_LABEL[group] : prettify(text);
-      // Deux colonnes du même fichier qui portent le même nom : on les garde séparées.
-      const clash = cols.filter((c) => c.baseKey === key).length;
+    function createColumn(o) {
+      let key;
+      let label;
+      if (o.own) {
+        key = 'sep:' + keyOf(o.t);
+        label = prettify(o.text);
+      } else if (o.group) {
+        key = o.group;
+        label = GROUP_LABEL[o.group];
+      } else if (o.generic) {
+        key = 'gen:' + ++genSeq;
+        label = o.text;
+      } else {
+        key = keyOf(o.t) || stripAccents(o.text);
+        label = prettify(o.text);
+      }
       const baseKey = key;
+      const clash = cols.filter((c) => c.baseKey === baseKey).length;
       if (clash) {
-        key = key + '#' + (clash + 1);
-        label = label + ' (' + (clash + 1) + ')';
+        key += '#' + (clash + 1);
+        label += ' (' + (clash + 1) + ')';
       }
       const col = {
         id: 'c' + ++seq,
         key,
         baseKey,
         label,
-        group: group || null,
-        norm: keyOf(t),
-        sorted: sortedKeyOf(t),
+        group: o.group || null,
+        generic: !!o.generic && !o.group,
+        ownKey: o.own ? keyOf(o.t) : null,
+        norm: o.own ? '@' + keyOf(o.t) : keyOf(o.t),
+        sorted: o.own ? '@' + keyOf(o.t) : sortedKeyOf(o.t),
+        toks: o.t,
         variants: new Set(),
+        variantKeys: new Map(),
         fileIds: new Set(),
         filled: 0,
+        reasons: new Set(),
+        low: false,
+        values: new Set(),
+        type: 'text',
+        autoHide: false,
       };
       cols.push(col);
       byId.set(col.id, col);
       return col;
     }
 
-    function matchColumn(text, used) {
-      const t = tokens(text);
-      const group = resolveGroup(t);
-      const k = keyOf(t);
-      const sk = sortedKeyOf(t);
-      let found = null;
-      if (group) found = cols.find((c) => c.group === group && !used.has(c.id));
-      if (!found && k) {
-        found = cols.find((c) => !used.has(c.id) && !c.group && (c.norm === k || c.sorted === sk));
+    /** Trouve la colonne unifiée qui correspond à cet intitulé / ce contenu. */
+    function matchColumn(h, used) {
+      const k = keyOf(h.t);
+      const sk = sortedKeyOf(h.t);
+
+      if (!h.generic && separate.has(k)) {
+        const f = cols.find((c) => c.ownKey === k && !used.has(c.id));
+        return f ? { col: f } : { create: { text: h.text, t: h.t, own: true } };
       }
-      if (!found && k) {
-        found = cols.find((c) => !used.has(c.id) && !c.group && fuzzyMatch(c.norm, k));
+
+      if (h.group) {
+        const f = cols.find((c) => c.group === h.group && !used.has(c.id));
+        return f ? { col: f, reason: h.groupReason, low: h.groupReason === 'contenu' } : { create: { text: h.text, t: h.t, group: h.group }, reason: h.groupReason };
       }
-      return found || { create: true, text, t, group };
+
+      const free = (c) => !used.has(c.id) && !c.group && !c.ownKey && !c.generic;
+      if (!h.generic && k) {
+        let f = cols.find((c) => free(c) && (c.norm === k || c.sorted === sk));
+        if (f) return { col: f, reason: 'intitulé' };
+        f = cols.find((c) => {
+          if (!free(c) || digitsOf(c.norm) !== digitsOf(k)) return false;
+          if (fuzzyMatch(c.norm, k)) return true;
+          const j = jaccardTokens(c.toks, h.t);
+          return j.union >= 3 && j.score >= 0.75;
+        });
+        if (f) return { col: f, reason: 'proche', low: true };
+      }
+
+      // Même contenu (listes de valeurs qui se recoupent : services, statuts, villes…)
+      const p = h.prof;
+      if (p && p.n && p.distinct.size >= 1 && p.distinct.size <= 40 && p.number < 0.5 && p.date < 0.5) {
+        let best = null;
+        let bestScore = 0;
+        cols.forEach((c) => {
+          if (!free(c) && !(c.generic && !used.has(c.id))) return;
+          if (c.type !== 'text' || !c.values.size) return;
+          let inter = 0;
+          p.distinct.forEach((x) => c.values.has(x) && inter++);
+          const score = inter / (p.distinct.size + c.values.size - inter);
+          if (inter >= 2 && score >= 0.5 && score > bestScore) {
+            best = c;
+            bestScore = score;
+          }
+        });
+        if (best) return { col: best, reason: 'contenu', low: true };
+      }
+      return { create: { text: h.text, t: h.t, group: null, generic: h.generic } };
     }
 
     files.forEach((file, fi) => {
@@ -308,60 +529,170 @@
       });
 
       usable.forEach(({ sh, info }) => {
+        if (info.headerless) headerlessSheets++;
+
+        // 1. Lignes nettoyées + échantillons par colonne
+        const heads = info.headers.map((h) => ({
+          idx: h.idx,
+          text: h.text,
+          t: tokens(h.text),
+          generic: info.headerless || isGenericHeader(h.text),
+        }));
+        const samples = heads.map(() => []);
+        const rowsClean = [];
+        for (let r = info.start; r < sh.rows.length; r++) {
+          const row = sh.rows[r];
+          if (!row) continue;
+          const cells = heads.map((h, i) => {
+            const v = cleanValue(row[h.idx]);
+            if (v !== null && samples[i].length < 300) samples[i].push(v);
+            return v;
+          });
+          if (cells.some((v) => v !== null)) rowsClean.push(cells);
+        }
+
+        // 2. Quel type d'information contient chaque colonne ?
+        heads.forEach((h, i) => {
+          h.prof = profile(samples[i]);
+          h.group = h.generic ? null : resolveGroup(h.t);
+          h.groupReason = h.group ? 'synonyme' : null;
+        });
+        heads.forEach((h) => {
+          const p = h.prof;
+          const emailish = p.n && p.email >= 0.7;
+          const phoneish = p.n && p.phone >= 0.7 && p.email < 0.3;
+          if (h.group === 'telephone' && emailish) [h.group, h.groupReason] = ['email', 'contenu'];
+          else if (h.group === 'email' && phoneish) [h.group, h.groupReason] = ['telephone', 'contenu'];
+          else if (!h.group) {
+            if (emailish) [h.group, h.groupReason] = ['email', 'contenu'];
+            else if (h.generic && p.n && p.sex >= 0.8 && p.distinct.size <= 6) [h.group, h.groupReason] = ['sexe', 'contenu'];
+            else if ((h.generic || h.t.some((w) => PHONE_HINTS.has(w))) && phoneish) [h.group, h.groupReason] = ['telephone', 'contenu'];
+          }
+        });
+        if (!heads.some((h) => ['nom', 'prenom', 'nomcomplet'].includes(h.group))) {
+          const cand = heads.find((h) => (h.generic || !h.group) && h.prof.n && h.prof.name >= 0.8);
+          if (cand) [cand.group, cand.groupReason] = ['nomcomplet', 'contenu'];
+        }
+
+        // 3. Rapprochement avec les colonnes déjà connues
         const used = new Set();
         let prev = null;
         const map = [];
-
-        info.headers.forEach(({ idx, text }) => {
-          let col = matchColumn(text, used);
-          if (col.create) {
-            col = createColumn(col.text, col.t, col.group, used);
+        heads.forEach((h, i) => {
+          const m = matchColumn(h, used);
+          let col = m.col;
+          if (!col) {
+            col = createColumn(m.create);
             const at = prev ? order.indexOf(prev) + 1 : 0;
             order.splice(at, 0, col.id);
           }
+          if (m.reason) col.reasons.add(m.reason);
+          if (m.low || h.groupReason === 'contenu') col.low = true;
           used.add(col.id);
-          col.variants.add(prettify(text));
+          col.variants.add(prettify(h.text));
+          if (!h.generic) col.variantKeys.set(prettify(h.text), keyOf(h.t));
           col.fileIds.add(fileId);
-          map.push({ idx, col });
+          h.prof.distinct.forEach((x) => col.values.size < 80 && col.values.add(x));
+          map.push({ i, col });
           prev = col.id;
         });
 
-        const headKeys = map.map((m) => keyOf(tokens(info.headers.find((h) => h.idx === m.idx).text)));
+        // 4. Enregistrements
+        const headKeys = heads.map((h) => (h.generic ? null : keyOf(h.t)));
         const label = usable.length > 1 ? baseName(file.name) + ' – ' + sh.name : baseName(file.name);
         let count = 0;
-
-        for (let r = info.headerRow + 1; r < sh.rows.length; r++) {
-          const row = sh.rows[r];
-          if (!row) continue;
+        rowsClean.forEach((cells) => {
           const vals = {};
           let filled = 0;
-          let repeatedHeader = 0;
-          map.forEach(({ idx, col }, mi) => {
-            const v = cleanValue(row[idx]);
+          let repeated = 0;
+          map.forEach(({ i, col }) => {
+            const v = cells[i];
             if (v === null) return;
             vals[col.id] = v;
             filled++;
-            if (typeof v === 'string' && keyOf(tokens(v)) === headKeys[mi]) repeatedHeader++;
+            if (headKeys[i] && typeof v === 'string' && keyOf(tokens(v)) === headKeys[i]) repeated++;
           });
-          if (!filled) continue;
-          if (map.length >= 2 && repeatedHeader >= Math.max(2, Math.ceil(map.length * 0.6))) continue;
+          if (!filled) return;
+          if (map.length >= 2 && repeated >= Math.max(2, Math.ceil(map.length * 0.6))) return;
           if (filled === 1 && map.length >= 3) {
             const only = Object.values(vals)[0];
-            if (typeof only === 'string' && /^(total|sous[- ]?total|signature|fait [aà])/i.test(only)) continue;
+            if (typeof only === 'string' && /^(total|sous[- ]?total|signature|fait [aà])/i.test(only)) return;
           }
           records.push({ fileId, file: baseName(file.name), source: label, vals });
           count++;
-        }
-        fr.sheets.push({ name: sh.name, rows: count, cols: map.length, headerRow: info.headerRow + 1 });
+        });
+        fr.sheets.push({ name: sh.name, rows: count, cols: map.length, headerRow: info.headerless ? null : info.headerRow + 1, headerless: info.headerless });
         fr.rows += count;
       });
     });
 
+    /* ---- Typage des colonnes : dates, nombres, téléphones ---------- */
+    const stats = new Map(cols.map((c) => [c.id, { n: 0, date: 0, isNum: 0, num: 0 }]));
     records.forEach((r) => {
-      Object.keys(r.vals).forEach((id) => {
-        byId.get(id).filled++;
-      });
+      for (const id in r.vals) {
+        const v = r.vals[id];
+        const s = stats.get(id);
+        s.n++;
+        if (v instanceof Date || parseDateText(v)) s.date++;
+        if (typeof v === 'number') s.isNum++;
+        else if (parseNumberText(v) !== null) s.num++;
+      }
     });
+    cols.forEach((c) => {
+      const s = stats.get(c.id);
+      if (!s.n) return;
+      if (['telephone', 'matricule', 'cnss'].includes(c.group)) c.type = 'text';
+      else if (s.date / s.n >= 0.7) c.type = 'date';
+      else if ((s.isNum / s.n >= 0.7 || ['salaire', 'enfants'].includes(c.group)) && (s.isNum + s.num) / s.n >= 0.7) c.type = 'number';
+    });
+    records.forEach((r) => {
+      for (const id in r.vals) {
+        const c = byId.get(id);
+        const v = r.vals[id];
+        if (c.type === 'date' && typeof v === 'string') {
+          const d = parseDateText(v);
+          if (d) r.vals[id] = d;
+        } else if (c.type === 'number' && typeof v === 'string') {
+          const n = parseNumberText(v);
+          if (n !== null) r.vals[id] = n;
+        } else if (c.group === 'telephone' && typeof v === 'number') r.vals[id] = String(v);
+      }
+    });
+
+    /* ---- "Nom et Prénoms" → Nom + Prénom quand d'autres fichiers les séparent ---- */
+    let splitCount = 0;
+    if (opts.splitNames) {
+      const full = cols.find((c) => c.group === 'nomcomplet');
+      let nomC = cols.find((c) => c.group === 'nom');
+      let preC = cols.find((c) => c.group === 'prenom');
+      if (full && (nomC || preC)) {
+        const make = (group) => {
+          const c = createColumn({ text: GROUP_LABEL[group], t: tokens(GROUP_LABEL[group]), group });
+          order.splice(order.indexOf(full.id), 0, c.id);
+          c.variants.add('déduit de « ' + full.label + ' »');
+          full.fileIds.forEach((f) => c.fileIds.add(f));
+          return c;
+        };
+        if (!nomC) nomC = make('nom');
+        if (!preC) preC = make('prenom');
+        records.forEach((r) => {
+          const f = r.vals[full.id];
+          if (typeof f !== 'string') return;
+          const sp = splitName(f);
+          let did = false;
+          if (sp.nom && r.vals[nomC.id] === undefined) [r.vals[nomC.id], did] = [sp.nom, true];
+          if (sp.prenom && r.vals[preC.id] === undefined) [r.vals[preC.id], did] = [sp.prenom, true];
+          if (did) splitCount++;
+        });
+        if (splitCount) {
+          nomC.reasons.add('déduit');
+          preC.reasons.add('déduit');
+          full.autoHide = true;
+        }
+      }
+    }
+
+    records.forEach((r) => Object.keys(r.vals).forEach((id) => byId.get(id).filled++));
 
     const columns = order.map((id) => {
       const c = byId.get(id);
@@ -370,9 +701,14 @@
         key: c.key,
         label: c.label,
         group: c.group,
+        type: c.type,
         variants: Array.from(c.variants),
+        variantKeys: Array.from(c.variants).map((v) => c.variantKeys.get(v) || null),
         fileCount: c.fileIds.size,
         filled: c.filled,
+        reasons: Array.from(c.reasons),
+        low: c.low,
+        autoHide: c.autoHide,
       };
     });
 
@@ -381,13 +717,16 @@
       records,
       report,
       fileCount: files.filter((f) => !f.error).length,
-      mergedColumns: columns.filter((c) => c.variants.length > 1).length,
+      mergedColumns: columns.filter((c) => c.variants.length > 1 && !c.reasons.includes('déduit')).length,
+      contentColumns: columns.filter((c) => c.reasons.includes('contenu')).length,
+      splitCount,
+      headerlessSheets,
     };
   }
 
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
   /*  Construction du tableau final                                      */
-  /* ------------------------------------------------------------------ */
+  /* ================================================================== */
 
   const collator = typeof Intl !== 'undefined' ? new Intl.Collator('fr', { numeric: true, sensitivity: 'base' }) : null;
 
@@ -399,38 +738,153 @@
     return collator ? collator.compare(sa, sb) : sa.localeCompare(sb);
   }
 
-  function signature(v) {
-    if (v === undefined || v === null) return '';
-    if (v instanceof Date) return 'd' + v.getTime();
-    return String(v).toLowerCase();
+  function cleanByGroup(group, v) {
+    if (typeof v !== 'string') return v;
+    switch (group) {
+      case 'nom': return v.toLocaleUpperCase('fr');
+      case 'prenom':
+      case 'ville':
+      case 'pays':
+      case 'nationalite': return titleCase(v);
+      case 'email': return v.toLowerCase();
+      case 'sexe': return normalizeSex(v);
+      default: return v;
+    }
+  }
+
+  const nameTokens = (s) => stripAccents(s).split(/[^a-z]+/).filter((w) => w.length >= 2);
+
+  function nameSimilar(a, b) {
+    if (a === b) return true;
+    const ta = a.split(' ');
+    const tb = b.split(' ');
+    const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
+    if (small.every((w) => big.includes(w))) return true;
+    return similarity(a, b) >= 0.82;
   }
 
   /**
-   * @param analysis résultat de analyze()
-   * @param st {cols:[{id,label,include}], source, numbering, dedupe, sortBy:'auto'|'none'|id, sortDir:'asc'|'desc'}
+   * @param st {cols:[{id,label,include,into?}], source, numbering, combine, clean, sortBy, sortDir}
    */
   function build(analysis, st) {
     const meta = new Map(analysis.columns.map((c) => [c.id, c]));
-    const cols = st.cols
-      .filter((c) => c.include && meta.has(c.id))
-      .map((c) => ({ id: c.id, label: c.label, group: meta.get(c.id).group, variants: meta.get(c.id).variants }));
+    const colsAll = st.cols.filter((c) => meta.has(c.id));
 
-    let recs = analysis.records.filter((r) => cols.some((c) => r.vals[c.id] !== undefined));
+    // Rattachements manuels : la colonne B est versée dans la colonne A.
+    const into = new Map();
+    colsAll.forEach((c) => {
+      if (c.into && c.into !== c.id && meta.has(c.into)) into.set(c.id, c.into);
+    });
+    const cols = colsAll
+      .filter((c) => c.include && !into.has(c.id))
+      .map((c) => ({ id: c.id, label: c.label, group: meta.get(c.id).group, meta: meta.get(c.id) }));
 
-    let removed = 0;
-    if (st.dedupe) {
-      const seen = new Set();
-      recs = recs.filter((r) => {
-        const k = cols.map((c) => signature(r.vals[c.id])).join('\u0001');
-        if (seen.has(k)) {
-          removed++;
-          return false;
-        }
-        seen.add(k);
-        return true;
+    let recs = analysis.records.map((r) => {
+      const vals = {};
+      Object.keys(r.vals).forEach((id) => {
+        if (!into.has(id)) vals[id] = r.vals[id];
+      });
+      Object.keys(r.vals).forEach((id) => {
+        if (into.has(id) && vals[into.get(id)] === undefined) vals[into.get(id)] = r.vals[id];
+      });
+      return { source: r.source, vals };
+    });
+
+    if (st.clean) {
+      recs.forEach((r) => {
+        for (const id in r.vals) r.vals[id] = cleanByGroup(meta.get(id).group, r.vals[id]);
       });
     }
 
+    // Colonnes "identité" (utilisées même si elles sont masquées)
+    const ids = (g) => analysis.columns.filter((c) => c.group === g).map((c) => c.id);
+    const matIds = ids('matricule');
+    const mailIds = ids('email');
+    const telIds = ids('telephone');
+    const nomIds = ids('nom');
+    const preIds = ids('prenom');
+    const fullIds = ids('nomcomplet');
+    const first = (r, list) => {
+      for (const id of list) if (r.vals[id] !== undefined) return r.vals[id];
+      return undefined;
+    };
+
+    function keysOf(r) {
+      const k = { mat: null, mail: null, tel: null, name: null };
+      const m = first(r, matIds);
+      if (m !== undefined) k.mat = String(m).toLowerCase().replace(/\s+/g, '');
+      const e = first(r, mailIds);
+      if (typeof e === 'string' && EMAIL_RE.test(e)) k.mail = e.toLowerCase();
+      const t = first(r, telIds);
+      const d = t === undefined ? null : phoneDigits(t);
+      if (d) k.tel = d.slice(-8);
+      let toks = [];
+      const n = first(r, nomIds);
+      const p = first(r, preIds);
+      if (n !== undefined) toks = toks.concat(nameTokens(String(n)));
+      if (p !== undefined) toks = toks.concat(nameTokens(String(p)));
+      if (!toks.length) {
+        const f = first(r, fullIds);
+        if (f !== undefined) toks = nameTokens(String(f));
+      }
+      if (toks.length) k.name = toks.sort().join(' ');
+      return k;
+    }
+
+    // Regroupement des lignes qui parlent de la même personne
+    let groups = [];
+    let absorbed = 0;
+    if (st.combine) {
+      const maps = { mat: new Map(), mail: new Map(), name: new Map(), tel: new Map(), sig: new Map() };
+      const compatible = (g, k) => {
+        if (g.k.mat && k.mat && g.k.mat !== k.mat) return false;
+        if (g.k.name && k.name && !nameSimilar(g.k.name, k.name)) return false;
+        return true;
+      };
+      recs.forEach((r) => {
+        const k = keysOf(r);
+        let target = null;
+        for (const kind of ['mat', 'mail', 'name', 'tel']) {
+          if (!k[kind]) continue;
+          if (kind === 'name' && k.name.split(' ').length < 2) continue;
+          const g = maps[kind].get(k[kind]);
+          if (g && compatible(g, k)) {
+            target = g;
+            break;
+          }
+        }
+        let sig = null;
+        if (!target && !(k.mat || k.mail || k.tel || (k.name && k.name.split(' ').length >= 2))) {
+          sig = cols.map((c) => signature(r.vals[c.id])).join('\u0001');
+          target = maps.sig.get(sig) || null;
+        }
+        if (target) {
+          absorbed++;
+          target.n++;
+          target.sources.add(r.source);
+          for (const id in r.vals) {
+            const v = r.vals[id];
+            if (target.vals[id] === undefined) target.vals[id] = v;
+            else if (signature(target.vals[id]) !== signature(v)) {
+              (target.conflicts[id] = target.conflicts[id] || new Set()).add(v instanceof Date ? dateToText(v) : String(v));
+            }
+          }
+          if (!target.k.mat) target.k.mat = k.mat;
+          if (!target.k.name) target.k.name = k.name;
+          ['mat', 'mail', 'name', 'tel'].forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], target));
+        } else {
+          const g = { vals: Object.assign({}, r.vals), sources: new Set([r.source]), conflicts: {}, n: 1, k };
+          groups.push(g);
+          ['mat', 'mail', 'name', 'tel'].forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], g));
+          if (sig !== null) maps.sig.set(sig, g);
+        }
+      });
+    } else {
+      groups = recs.map((r) => ({ vals: r.vals, sources: new Set([r.source]), conflicts: {}, n: 1 }));
+    }
+    groups = groups.filter((g) => cols.some((c) => g.vals[c.id] !== undefined));
+
+    // Tri
     let keys = [];
     if (st.sortBy === 'auto') {
       const g = (id) => cols.find((c) => c.group === id);
@@ -441,18 +895,15 @@
       const c = cols.find((x) => x.id === st.sortBy);
       if (c) keys = [c];
     }
-
     if (keys.length) {
       const dir = st.sortDir === 'desc' ? -1 : 1;
-      recs = recs.slice().sort((x, y) => {
+      groups = groups.slice().sort((x, y) => {
         for (const k of keys) {
           const a = x.vals[k.id];
           const b = y.vals[k.id];
-          const an = a === undefined;
-          const bn = b === undefined;
-          if (an || bn) {
-            if (an && bn) continue;
-            return an ? 1 : -1; // les cases vides restent toujours en bas
+          if (a === undefined || b === undefined) {
+            if (a === undefined && b === undefined) continue;
+            return a === undefined ? 1 : -1;
           }
           const c = compare(a, b);
           if (c) return c * dir;
@@ -461,33 +912,45 @@
       });
     }
 
+    const off = st.numbering ? 1 : 0;
     const headers = [];
     if (st.numbering) headers.push('N°');
     cols.forEach((c) => headers.push(c.label || 'Colonne'));
     if (st.source) headers.push('Fichier source');
 
-    const rows = recs.map((r, i) => {
+    const conflictMap = {};
+    let conflictCount = 0;
+    const rows = groups.map((g, ri) => {
       const out = [];
-      if (st.numbering) out.push(i + 1);
-      cols.forEach((c) => out.push(r.vals[c.id] === undefined ? null : r.vals[c.id]));
-      if (st.source) out.push(r.source);
+      if (st.numbering) out.push(ri + 1);
+      cols.forEach((c, ci) => {
+        out.push(g.vals[c.id] === undefined ? null : g.vals[c.id]);
+        const alts = g.conflicts[c.id];
+        if (alts && alts.size) {
+          conflictMap[ri + ':' + (ci + off)] = Array.from(alts).join(' | ');
+          conflictCount++;
+        }
+      });
+      if (st.source) out.push(Array.from(g.sources).join(' + '));
       return out;
     });
+
+    const headMeta = (st.numbering ? [{ variants: [], merged: false }] : [])
+      .concat(cols.map((c) => ({ variants: c.meta.variants, merged: c.meta.variants.length > 1 && !c.meta.reasons.includes('déduit'), low: c.meta.low })))
+      .concat(st.source ? [{ variants: [], merged: false }] : []);
 
     return {
       headers,
       rows,
-      removed,
+      headMeta,
+      conflictMap,
+      conflictCount,
+      absorbed,
+      combinedRows: groups.filter((g) => g.n > 1).length,
       sortedBy: keys.map((k) => k.label),
       columnCount: cols.length,
-      mergedFlags: (st.numbering ? [false] : [])
-        .concat(cols.map((c) => c.variants.length > 1))
-        .concat(st.source ? [false] : []),
-      variantsList: (st.numbering ? [[]] : [])
-        .concat(cols.map((c) => c.variants))
-        .concat(st.source ? [[]] : []),
     };
   }
 
-  return { analyze, build, dateToText, tokens, resolveGroup, readSheet };
+  return { analyze, build, dateToText, tokens, resolveGroup, readSheet, splitName, parseDateText };
 });

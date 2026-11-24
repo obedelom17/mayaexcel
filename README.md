@@ -4,7 +4,12 @@ Fusionnez plusieurs fichiers Excel (.xlsx, .xls, .csv) en **un seul tableau** pr
 
 - Repère automatiquement la ligne d'en-têtes (même sous un titre ou des lignes vides)
 - Regroupe les colonnes qui veulent dire la même chose : `Tel`, `Téléphone`, `Phone` → **Téléphone**
-- Range les lignes (tri automatique par Nom/Prénom, ou par la colonne de votre choix), retire les doublons
+- Reconnaît aussi une colonne **d'après son contenu** (e-mails, numéros, M/F…), même sans titre ou avec un titre inconnu, et les fichiers **sans ligne d'en-têtes**
+- Sépare « Nom et Prénoms » quand d'autres fichiers ont Nom et Prénom à part
+- Regroupe les lignes d'une **même personne** présente dans plusieurs fichiers (matricule, e-mail, téléphone ou nom) ; en cas de valeurs différentes, la première est gardée et la case est surlignée
+- Uniformise les dates (« 12 mars 2019 », « 03/02/2021 »…), les nombres, les majuscules, M/F
+- Range les lignes (tri automatique par Nom/Prénom, ou par la colonne de votre choix)
+- Chaque regroupement automatique peut être corrigé (✂ pour séparer, « Rattacher à » pour rassembler)
 - Interface mobile, installable sur l'écran d'accueil (PWA), utilisable hors connexion après la première visite
 - Tout est traité dans le navigateur : aucun fichier n'est envoyé sur un serveur
 
@@ -20,19 +25,21 @@ Fusionnez plusieurs fichiers Excel (.xlsx, .xls, .csv) en **un seul tableau** pr
    git push -u origin main
    ```
 2. Sur [vercel.com](https://vercel.com) : **Add New → Project**, choisissez le dépôt `mayaexcel`.
-3. Laissez les réglages par défaut : *Framework Preset* = **Other**, pas de *Build Command*, pas d'*Output Directory*. Cliquez sur **Deploy**.
+3. Laissez les réglages par défaut (*Framework Preset* = **Other**) : `vercel.json` indique déjà la commande de construction (`node scripts/build.mjs`) et le dossier `dist`. Cliquez sur **Deploy**.
 
-C'est un site statique : aucune installation (`npm`) n'est nécessaire.
+Aucune installation (`npm install`) n'est nécessaire. La commande de construction écrit l'adresse réelle de votre site dans les balises OpenGraph.
+Si vous utilisez un nom de domaine personnalisé, ajoutez dans Vercel (*Settings → Environment Variables*) la variable `SITE_URL` = `https://votre-domaine.com`.
 
 ## Installer sur le téléphone
 
 - **Android (Chrome)** : un bouton « Installer » apparaît en haut de la page.
 - **iPhone (Safari)** : Partager → *Sur l'écran d'accueil*.
 
-## Aperçu lors d'un partage WhatsApp
+## Aperçu lors d'un partage (OpenGraph)
 
-Dans `index.html`, remplacez `content="/og-image.png"` par l'adresse complète de votre site, par exemple
-`content="https://mayaexcel.vercel.app/og-image.png"`.
+La page contient toutes les balises OpenGraph et Twitter (titre, description, image 1200×630). Les adresses complètes sont
+renseignées automatiquement au déploiement. Après un changement, WhatsApp/Facebook gardent l'ancien aperçu en cache :
+utilisez l'outil « Débogueur de partage » de Facebook pour le rafraîchir.
 
 ## Structure
 
@@ -40,6 +47,7 @@ Dans `index.html`, remplacez `content="/og-image.png"` par l'adresse complète d
 index.html            page unique
 css/style.css         styles
 js/merge.js           moteur de fusion (sans dépendance)
+scripts/build.mjs     construction pour Vercel (adresse OpenGraph)
 js/app.js             interface, lecture et export
 sw.js                 service worker (mode hors connexion)
 manifest.webmanifest  configuration de l'application installable

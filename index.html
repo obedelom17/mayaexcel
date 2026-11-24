@@ -19,11 +19,25 @@
   <meta name="apple-mobile-web-app-title" content="MayaExcel">
   <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
+  <link rel="canonical" href="__SITE_URL__/">
   <meta property="og:type" content="website">
+  <meta property="og:site_name" content="MayaExcel">
+  <meta property="og:locale" content="fr_FR">
+  <meta property="og:url" content="__SITE_URL__/">
   <meta property="og:title" content="MayaExcel – Plusieurs fichiers Excel, un seul tableau">
-  <meta property="og:description" content="Déposez les fichiers de votre équipe, récupérez un tableau Excel unique, propre et trié.">
-  <meta property="og:image" content="/og-image.png">
+  <meta property="og:description" content="Déposez les fichiers de votre équipe : MayaExcel aligne les colonnes, regroupe les doublons et vous rend un tableau Excel unique, propre et trié.">
+  <meta property="og:image" content="__SITE_URL__/og-image.png">
+  <meta property="og:image:secure_url" content="__SITE_URL__/og-image.png">
+  <meta property="og:image:type" content="image/png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="MayaExcel : plusieurs fichiers Excel fusionnés en un seul tableau">
   <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:title" content="MayaExcel – Plusieurs fichiers Excel, un seul tableau">
+  <meta name="twitter:description" content="Fusion intelligente de fichiers Excel, gratuite, sur téléphone ou ordinateur.">
+  <meta name="twitter:image" content="__SITE_URL__/og-image.png">
+  <meta name="twitter:image:alt" content="MayaExcel : plusieurs fichiers Excel fusionnés en un seul tableau">
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"MayaExcel","url":"__SITE_URL__/","applicationCategory":"BusinessApplication","operatingSystem":"Any","inLanguage":"fr","description":"Fusionne plusieurs fichiers Excel en un seul tableau propre et trié.","offers":{"@type":"Offer","price":"0","priceCurrency":"XOF"}}</script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -52,14 +66,17 @@
     </defs>
   </svg>
 
-  <div class="wrap">
-    <header class="top">
+  <header class="top" id="top">
+    <div class="wrap top-in">
       <a class="brand" href="/" aria-label="MayaExcel – accueil">
         <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
         <span>MayaExcel</span>
       </a>
       <button type="button" class="btn btn-ghost btn-small" id="installBtn" hidden>Installer l’application</button>
-    </header>
+    </div>
+  </header>
+
+  <div class="wrap">
 
     <aside class="install-strip" id="installStrip" hidden>
       <svg class="install-mark" aria-hidden="true"><use href="#logo"/></svg>
@@ -78,9 +95,9 @@
         <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
           <svg class="drop-art" viewBox="0 0 300 112" aria-hidden="true">
             <g class="art-small">
-              <rect x="4" y="4" width="76" height="30" rx="5"/><rect x="4" y="4" width="76" height="9" rx="4" class="art-head"/><path d="M12 22h28M12 28h42"/>
-              <rect x="14" y="41" width="76" height="30" rx="5"/><rect x="14" y="41" width="76" height="9" rx="4" class="art-head"/><path d="M22 59h34M22 65h24"/>
-              <rect x="4" y="78" width="76" height="30" rx="5"/><rect x="4" y="78" width="76" height="9" rx="4" class="art-head"/><path d="M12 96h22M12 102h38"/>
+              <g class="sm sm1"><rect x="4" y="4" width="76" height="30" rx="5"/><rect x="4" y="4" width="76" height="9" rx="4" class="art-head"/><path d="M12 22h28M12 28h42"/></g>
+              <g class="sm sm2"><rect x="14" y="41" width="76" height="30" rx="5"/><rect x="14" y="41" width="76" height="9" rx="4" class="art-head"/><path d="M22 59h34M22 65h24"/></g>
+              <g class="sm sm3"><rect x="4" y="78" width="76" height="30" rx="5"/><rect x="4" y="78" width="76" height="9" rx="4" class="art-head"/><path d="M12 96h22M12 102h38"/></g>
             </g>
             <g class="art-arrows"><path d="M96 24c28 0 40 20 62 30M104 57h54M96 94c28 0 40-20 62-30"/><path d="M152 49l8 5-8 5"/></g>
             <g class="art-big">
@@ -88,12 +105,16 @@
               <rect x="172" y="8" width="124" height="20" rx="8" class="art-head"/>
               <path d="M172 48h124M172 68h124M172 88h124M214 28v76M256 28v76" class="art-grid"/>
               <rect x="173" y="49" width="122" height="18" class="art-mark"/>
+              <rect x="176" y="31" width="34" height="13" rx="3" class="art-fill f1"/><rect x="218" y="31" width="34" height="13" rx="3" class="art-fill f1"/><rect x="260" y="31" width="32" height="13" rx="3" class="art-fill f1"/>
+              <rect x="176" y="71" width="34" height="13" rx="3" class="art-fill f2"/><rect x="218" y="71" width="34" height="13" rx="3" class="art-fill f2"/><rect x="260" y="71" width="32" height="13" rx="3" class="art-fill f2"/>
+              <rect x="176" y="91" width="34" height="10" rx="3" class="art-fill f3"/><rect x="218" y="91" width="34" height="10" rx="3" class="art-fill f3"/><rect x="260" y="91" width="32" height="10" rx="3" class="art-fill f3"/>
             </g>
           </svg>
           <p class="drop-title">Déposez vos fichiers Excel ici</p>
           <p class="drop-sub">Format .xlsx, .xls ou .csv. Autant de fichiers que vous voulez.</p>
           <button type="button" class="btn btn-primary" id="pickBtn">Choisir des fichiers</button>
           <input type="file" id="fileInput" multiple accept=".xlsx,.xlsm,.xls,.csv,.ods,.tsv" hidden>
+          <button type="button" class="link-btn" id="demoBtn">Voir un exemple avec 3 fichiers</button>
           <p class="drop-note">Vos fichiers restent sur votre appareil : rien n’est envoyé sur Internet.</p>
         </div>
       </section>
@@ -114,7 +135,24 @@
           <h2 id="resultTitle"><span class="step">2</span> Le tableau fusionné</h2>
         </div>
 
+        <div class="stage" id="stage" hidden aria-live="polite">
+          <svg class="stage-art" viewBox="0 0 240 96" aria-hidden="true">
+            <g class="st-s st-1"><rect x="4" y="6" width="56" height="24" rx="5"/><rect x="4" y="6" width="56" height="7" rx="3" class="art-head"/><path d="M10 21h20M10 26h32"/></g>
+            <g class="st-s st-2"><rect x="4" y="36" width="56" height="24" rx="5"/><rect x="4" y="36" width="56" height="7" rx="3" class="art-head"/><path d="M10 51h26M10 56h18"/></g>
+            <g class="st-s st-3"><rect x="4" y="66" width="56" height="24" rx="5"/><rect x="4" y="66" width="56" height="7" rx="3" class="art-head"/><path d="M10 81h16M10 86h30"/></g>
+            <g class="st-big"><rect x="130" y="8" width="104" height="80" rx="7"/><rect x="130" y="8" width="104" height="16" rx="7" class="art-head"/><path d="M130 40h104M130 56h104M130 72h104M165 24v64M200 24v64" class="art-grid"/><rect x="131" y="41" width="102" height="14" class="art-mark"/></g>
+          </svg>
+          <ol class="stage-steps" id="stageSteps">
+            <li>Lecture des fichiers</li>
+            <li>Repérage des en-têtes</li>
+            <li>Rapprochement des colonnes</li>
+            <li>Regroupement et tri des lignes</li>
+          </ol>
+        </div>
+
+        <div id="resultBody">
         <p class="summary" id="summary"></p>
+        <ul class="insights" id="insights"></ul>
 
         <div class="panel settings" id="settings">
           <div class="field">
@@ -125,7 +163,9 @@
             </div>
           </div>
           <div class="toggles">
-            <label class="check"><input type="checkbox" id="optDedupe"> <span>Retirer les doublons</span></label>
+            <label class="check"><input type="checkbox" id="optCombine"> <span>Regrouper les lignes de la même personne</span></label>
+            <label class="check"><input type="checkbox" id="optSplit"> <span>Séparer Nom et Prénom automatiquement</span></label>
+            <label class="check"><input type="checkbox" id="optClean"> <span>Harmoniser majuscules et formats</span></label>
             <label class="check"><input type="checkbox" id="optNumber"> <span>Numéroter les lignes</span></label>
             <label class="check"><input type="checkbox" id="optSource"> <span>Ajouter le fichier d’origine</span></label>
             <label class="check"><input type="checkbox" id="optSheets"> <span>Lire toutes les feuilles de chaque fichier</span></label>
@@ -134,18 +174,21 @@
 
         <details class="panel cols" id="colsPanel">
           <summary><span id="colsSummary">Colonnes</span></summary>
-          <p class="cols-help">Renommez, masquez ou déplacez les colonnes. Un point jaune indique des colonnes regroupées automatiquement.</p>
+          <p class="cols-help">Voici ce que MayaExcel a compris. Renommez, masquez ou déplacez les colonnes. Si deux colonnes ont été regroupées à tort, touchez ✂ sur l’intitulé pour les séparer ; à l’inverse, « Rattacher à » les rassemble.</p>
           <ol class="cols-list" id="colsList"></ol>
         </details>
 
         <div class="sheet-wrap">
+          <div class="fbar" aria-live="polite"><span class="fb-ref" id="fbRef">A1</span><span class="fb-val" id="fbVal">Touchez une cellule pour voir son contenu</span></div>
           <div class="sheet" id="sheet" tabindex="0" aria-label="Aperçu du tableau fusionné"></div>
           <p class="sheet-note" id="sheetNote"></p>
+          <p class="legend"><span class="merged-dot"></span> colonne regroupée <span class="legend-sep"></span> <span class="conf-sample">abc</span> valeurs différentes selon les fichiers (la première est gardée)</p>
         </div>
 
         <div class="actions" id="actions">
           <button type="button" class="btn btn-primary btn-big" id="dlXlsx">Télécharger en Excel</button>
           <button type="button" class="btn btn-ghost btn-big" id="dlCsv">CSV</button>
+        </div>
         </div>
       </section>
     </main>
