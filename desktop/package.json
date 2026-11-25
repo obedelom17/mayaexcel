@@ -1,7 +1,7 @@
 {
   "name": "mayaexcel-desktop",
-  "version": "2.0.0",
-  "description": "MayaExcel – fusion intelligente de fichiers Excel",
+  "version": "3.0.0",
+  "description": "MayaExcel \u2013 fusion intelligente de fichiers Excel",
   "author": "MayaExcel",
   "main": "main.js",
   "scripts": {
@@ -15,13 +15,30 @@
   "build": {
     "appId": "tg.mayaexcel.app",
     "productName": "MayaExcel",
-    "directories": { "output": "release" },
-    "files": ["main.js", "icon.png", "www/**/*", "package.json"],
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "main.js",
+      "icon.png",
+      "www/**/*",
+      "package.json"
+    ],
     "win": {
       "icon": "icon.ico",
-      "target": ["nsis", "portable"]
+      "target": [
+        "nsis",
+        "portable"
+      ]
     },
-    "nsis": { "oneClick": false, "allowToChangeInstallationDirectory": true, "perMachine": false },
-    "artifactName": "MayaExcel-${version}-${env.MAYA_KIND}.${ext}"
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "perMachine": false,
+      "artifactName": "MayaExcel-Setup.${ext}"
+    },
+    "portable": {
+      "artifactName": "MayaExcel-Portable.${ext}"
+    }
   }
 }

@@ -69,10 +69,10 @@
 
   const digitsOf = (s) => (s.match(/\d+/g) || []).join('-');
 
-  function fuzzyMatch(a, b) {
+  function fuzzyMatch(a, b, th) {
     if (a.length < 5 || b.length < 5) return false;
     if (digitsOf(a) !== digitsOf(b)) return false; // "Adresse 1" ≠ "Adresse 2"
-    return similarity(a, b) >= 0.86;
+    return similarity(a, b) >= (th || 0.86);
   }
 
   function jaccardTokens(ta, tb) {
@@ -132,12 +132,12 @@
     });
   });
 
-  function resolveGroup(t) {
+  function resolveGroup(t, th) {
     if (!t.length) return null;
     const k = keyOf(t);
     if (GROUP_MAP.has(k)) return GROUP_MAP.get(k);
     if (GROUP_MAP.has('~' + sortedKeyOf(t))) return GROUP_MAP.get('~' + sortedKeyOf(t));
-    for (const g of GROUP_KEYS) if (fuzzyMatch(k, g.key)) return g.group;
+    for (const g of GROUP_KEYS) if (fuzzyMatch(k, g.key, th)) return g.group;
     return null;
   }
 
@@ -350,7 +350,8 @@
     return dataish || nums / cells.length >= 0.5;
   }
 
-  function readSheet(rows) {
+  function readSheet(rows, ho) {
+    ho = ho || { mode: 'auto' };
     if (!rows || !rows.length) return null;
     const stat = rows.slice(0, 40).map((row) => {
       let filled = 0;
@@ -370,8 +371,17 @@
     if (headerRow < 0) headerRow = stat.findIndex((s) => s.filled > 0);
     if (headerRow < 0) return null;
 
-    // La "ligne d'en-têtes" est peut-être déjà une ligne de données (fichier sans titres de colonnes).
-    const headerless = looksLikeData(rows[headerRow]);
+    let headerless;
+    if (ho.mode === 'none') {
+      headerRow = stat.findIndex((s) => s.filled > 0);
+      headerless = true;
+    } else if (ho.mode === 'fixed' && ho.row >= 1 && ho.row <= rows.length && (rows[ho.row - 1] || []).some((c) => !isEmpty(c))) {
+      headerRow = ho.row - 1;
+      headerless = false;
+    } else {
+      // La "ligne d'en-têtes" est peut-être déjà une ligne de données (fichier sans titres de colonnes).
+      headerless = looksLikeData(rows[headerRow]);
+    }
     const start = headerless ? headerRow : headerRow + 1;
 
     let hasData = false;
@@ -407,7 +417,15 @@
    * @param options {allSheets, splitNames, separate:[clés d'intitulés à ne jamais regrouper]}
    */
   function analyze(files, options) {
-    const opts = Object.assign({ allSheets: true, splitNames: true, separate: [] }, options || {});
+    const opts = Object.assign({ allSheets: true, splitNames: true, separate: [], sensitivity: 'balanced', contentMatch: true, headerMode: 'auto', headerRow: 1 }, options || {});
+    const SENS = {
+      strict: { fuzzy: 0.93, syn: 0.92, jac: 2, overlapMin: 1, overlap: 2 },
+      balanced: { fuzzy: 0.86, syn: 0.86, jac: 0.75, overlapMin: 2, overlap: 0.5 },
+      large: { fuzzy: 0.78, syn: 0.8, jac: 0.6, overlapMin: 2, overlap: 0.34 },
+    };
+    const sens = SENS[opts.sensitivity] || SENS.balanced;
+    const useContent = opts.contentMatch !== false;
+    const headerOpts = { mode: opts.headerMode, row: Number(opts.headerRow) || 1 };
     const separate = new Set(opts.separate || []);
     const cols = [];
     const byId = new Map();
@@ -487,25 +505,27 @@
         if (f) return { col: f, reason: 'intitulé' };
         f = cols.find((c) => {
           if (!free(c) || digitsOf(c.norm) !== digitsOf(k)) return false;
-          if (fuzzyMatch(c.norm, k)) return true;
+          if (fuzzyMatch(c.norm, k, sens.fuzzy)) return true;
           const j = jaccardTokens(c.toks, h.t);
-          return j.union >= 3 && j.score >= 0.75;
+          return j.union >= 3 && j.score >= sens.jac;
         });
         if (f) return { col: f, reason: 'proche', low: true };
       }
 
       // Même contenu (listes de valeurs qui se recoupent : services, statuts, villes…)
       const p = h.prof;
-      if (p && p.n && p.distinct.size >= 1 && p.distinct.size <= 40 && p.number < 0.5 && p.date < 0.5) {
+      if (useContent && sens.overlap <= 1 && p && p.n && p.distinct.size >= 1 && p.distinct.size <= 40 && p.number < 0.5 && p.date < 0.5) {
         let best = null;
         let bestScore = 0;
         cols.forEach((c) => {
           if (!free(c) && !(c.generic && !used.has(c.id))) return;
           if (c.type !== 'text' || !c.values.size) return;
+          const vals = Array.from(c.values);
+          if (vals.filter((x) => /^-?\d+([.,]\d+)?$/.test(x)).length > vals.length / 2) return; // colonne numérique
           let inter = 0;
           p.distinct.forEach((x) => c.values.has(x) && inter++);
           const score = inter / (p.distinct.size + c.values.size - inter);
-          if (inter >= 2 && score >= 0.5 && score > bestScore) {
+          if (inter >= sens.overlapMin && score >= sens.overlap && score > bestScore) {
             best = c;
             bestScore = score;
           }
@@ -522,7 +542,7 @@
       if (file.error) return;
 
       const sheets = opts.allSheets ? file.sheets : file.sheets.slice(0, 1);
-      const parsed = sheets.map((sh) => ({ sh, info: readSheet(sh.rows) }));
+      const parsed = sheets.map((sh) => ({ sh, info: readSheet(sh.rows, headerOpts) }));
       const usable = parsed.filter((p) => p.info);
       parsed.forEach((p) => {
         if (!p.info) fr.sheets.push({ name: p.sh.name, rows: 0, cols: 0, empty: true });
@@ -554,10 +574,10 @@
         // 2. Quel type d'information contient chaque colonne ?
         heads.forEach((h, i) => {
           h.prof = profile(samples[i]);
-          h.group = h.generic ? null : resolveGroup(h.t);
+          h.group = h.generic ? null : resolveGroup(h.t, sens.syn);
           h.groupReason = h.group ? 'synonyme' : null;
         });
-        heads.forEach((h) => {
+        if (useContent) heads.forEach((h) => {
           const p = h.prof;
           const emailish = p.n && p.email >= 0.7;
           const phoneish = p.n && p.phone >= 0.7 && p.email < 0.3;
@@ -569,7 +589,7 @@
             else if ((h.generic || h.t.some((w) => PHONE_HINTS.has(w))) && phoneish) [h.group, h.groupReason] = ['telephone', 'contenu'];
           }
         });
-        if (!heads.some((h) => ['nom', 'prenom', 'nomcomplet'].includes(h.group))) {
+        if (useContent && !heads.some((h) => ['nom', 'prenom', 'nomcomplet'].includes(h.group))) {
           const cand = heads.find((h) => (h.generic || !h.group) && h.prof.n && h.prof.name >= 0.8);
           if (cand) [cand.group, cand.groupReason] = ['nomcomplet', 'contenu'];
         }
@@ -738,16 +758,42 @@
     return collator ? collator.compare(sa, sb) : sa.localeCompare(sb);
   }
 
-  function cleanByGroup(group, v) {
+  const caseOf = (v, mode) => (mode === 'upper' ? v.toLocaleUpperCase('fr') : mode === 'title' ? titleCase(v) : v);
+
+  /** Formate un numéro de téléphone (espaces, indicatif…). */
+  function formatPhone(v, fmt, cc) {
+    const raw = String(v).trim();
+    let plus = raw.startsWith('+');
+    let d = raw.replace(/\D/g, '');
+    if (!d) return raw;
+    if (d.startsWith('00')) {
+      d = d.slice(2);
+      plus = true;
+    }
+    if (fmt === 'digits') return (plus ? '+' : '') + d;
+    const code = String(cc || '').replace(/\D/g, '');
+    const grp = (x) => x.replace(/(\d{2})(?=\d)/g, '$1 ').trim();
+    if (plus && code && d.startsWith(code)) return '+' + code + ' ' + grp(d.slice(code.length));
+    if (fmt === 'intl' && code && !plus) {
+      if (d.startsWith(code) && d.length > 9) return '+' + code + ' ' + grp(d.slice(code.length));
+      return '+' + code + ' ' + grp(d);
+    }
+    return (plus ? '+' : '') + grp(d);
+  }
+
+  function cleanByGroup(group, v, st) {
+    if (group === 'telephone') {
+      return st.phoneFormat && st.phoneFormat !== 'keep' && (typeof v === 'string' || typeof v === 'number') ? formatPhone(v, st.phoneFormat, st.phoneCC) : v;
+    }
     if (typeof v !== 'string') return v;
     switch (group) {
-      case 'nom': return v.toLocaleUpperCase('fr');
-      case 'prenom':
+      case 'nom': return caseOf(v, st.nomCase || 'upper');
+      case 'prenom': return caseOf(v, st.prenomCase || 'title');
       case 'ville':
       case 'pays':
-      case 'nationalite': return titleCase(v);
-      case 'email': return v.toLowerCase();
-      case 'sexe': return normalizeSex(v);
+      case 'nationalite': return st.placeCase === false ? v : titleCase(v);
+      case 'email': return st.emailLower === false ? v : v.toLowerCase();
+      case 'sexe': return st.sexNorm === false ? v : normalizeSex(v);
       default: return v;
     }
   }
@@ -764,7 +810,9 @@
   }
 
   /**
-   * @param st {cols:[{id,label,include,into?}], source, numbering, combine, clean, sortBy, sortDir}
+   * @param st {cols:[{id,label,include,into?}], source, numbering, combine, keyCol:'auto'|id, conflict:'first'|'last'|'longest',
+   *            clean, nomCase, prenomCase, emailLower, sexNorm, placeCase, phoneFormat, phoneCC, dropEmptyCols,
+   *            sortBy:'auto'|'none'|id, sortDir, sortBy2:'none'|id, sortDir2}
    */
   function build(analysis, st) {
     const meta = new Map(analysis.columns.map((c) => [c.id, c]));
@@ -773,13 +821,13 @@
     // Rattachements manuels : la colonne B est versée dans la colonne A.
     const into = new Map();
     colsAll.forEach((c) => {
-      if (c.into && c.into !== c.id && meta.has(c.into)) into.set(c.id, c.into);
+      if (c.into && c.into !== c.id && meta.has(c.into) && !(colsAll.find((x) => x.id === c.into) || {}).into) into.set(c.id, c.into);
     });
-    const cols = colsAll
+    let cols = colsAll
       .filter((c) => c.include && !into.has(c.id))
       .map((c) => ({ id: c.id, label: c.label, group: meta.get(c.id).group, meta: meta.get(c.id) }));
 
-    let recs = analysis.records.map((r) => {
+    const recs = analysis.records.map((r) => {
       const vals = {};
       Object.keys(r.vals).forEach((id) => {
         if (!into.has(id)) vals[id] = r.vals[id];
@@ -792,11 +840,10 @@
 
     if (st.clean) {
       recs.forEach((r) => {
-        for (const id in r.vals) r.vals[id] = cleanByGroup(meta.get(id).group, r.vals[id]);
+        for (const id in r.vals) r.vals[id] = cleanByGroup(meta.get(id).group, r.vals[id], st);
       });
     }
 
-    // Colonnes "identité" (utilisées même si elles sont masquées)
     const ids = (g) => analysis.columns.filter((c) => c.group === g).map((c) => c.id);
     const matIds = ids('matricule');
     const mailIds = ids('email');
@@ -808,9 +855,15 @@
       for (const id of list) if (r.vals[id] !== undefined) return r.vals[id];
       return undefined;
     };
+    const customKey = st.keyCol && st.keyCol !== 'auto' && meta.has(st.keyCol) ? (into.get(st.keyCol) || st.keyCol) : null;
 
     function keysOf(r) {
-      const k = { mat: null, mail: null, tel: null, name: null };
+      const k = { mat: null, mail: null, tel: null, name: null, custom: null };
+      if (customKey) {
+        const v = r.vals[customKey];
+        if (v !== undefined) k.custom = stripAccents(v instanceof Date ? v.getTime() : String(v)).replace(/\s+/g, ' ').trim();
+        return k;
+      }
       const m = first(r, matIds);
       if (m !== undefined) k.mat = String(m).toLowerCase().replace(/\s+/g, '');
       const e = first(r, mailIds);
@@ -831,12 +884,35 @@
       return k;
     }
 
-    // Regroupement des lignes qui parlent de la même personne
+    const KINDS = customKey ? ['custom'] : ['mat', 'mail', 'name', 'tel'];
+    const strongKey = (k) => (customKey ? !!k.custom : !!(k.mat || k.mail || k.tel || (k.name && k.name.split(' ').length >= 2)));
+
+    function absorb(target, r) {
+      target.n++;
+      target.sources.add(r.source);
+      for (const id in r.vals) {
+        const v = r.vals[id];
+        const cur = target.vals[id];
+        if (cur === undefined) {
+          target.vals[id] = v;
+        } else if (signature(cur) !== signature(v)) {
+          const alts = (target.conflicts[id] = target.conflicts[id] || new Set());
+          const show = (x) => (x instanceof Date ? dateToText(x) : String(x));
+          const pick = st.conflict === 'last' || (st.conflict === 'longest' && String(v).length > String(cur).length);
+          if (pick) {
+            alts.add(show(cur));
+            target.vals[id] = v;
+          } else alts.add(show(v));
+        }
+      }
+    }
+
     let groups = [];
     let absorbed = 0;
     if (st.combine) {
-      const maps = { mat: new Map(), mail: new Map(), name: new Map(), tel: new Map(), sig: new Map() };
+      const maps = { mat: new Map(), mail: new Map(), name: new Map(), tel: new Map(), custom: new Map(), sig: new Map() };
       const compatible = (g, k) => {
+        if (customKey) return true;
         if (g.k.mat && k.mat && g.k.mat !== k.mat) return false;
         if (g.k.name && k.name && !nameSimilar(g.k.name, k.name)) return false;
         return true;
@@ -844,7 +920,7 @@
       recs.forEach((r) => {
         const k = keysOf(r);
         let target = null;
-        for (const kind of ['mat', 'mail', 'name', 'tel']) {
+        for (const kind of KINDS) {
           if (!k[kind]) continue;
           if (kind === 'name' && k.name.split(' ').length < 2) continue;
           const g = maps[kind].get(k[kind]);
@@ -854,59 +930,60 @@
           }
         }
         let sig = null;
-        if (!target && !(k.mat || k.mail || k.tel || (k.name && k.name.split(' ').length >= 2))) {
+        if (!target && !strongKey(k)) {
           sig = cols.map((c) => signature(r.vals[c.id])).join('\u0001');
           target = maps.sig.get(sig) || null;
         }
         if (target) {
           absorbed++;
-          target.n++;
-          target.sources.add(r.source);
-          for (const id in r.vals) {
-            const v = r.vals[id];
-            if (target.vals[id] === undefined) target.vals[id] = v;
-            else if (signature(target.vals[id]) !== signature(v)) {
-              (target.conflicts[id] = target.conflicts[id] || new Set()).add(v instanceof Date ? dateToText(v) : String(v));
-            }
-          }
+          absorb(target, r);
           if (!target.k.mat) target.k.mat = k.mat;
           if (!target.k.name) target.k.name = k.name;
-          ['mat', 'mail', 'name', 'tel'].forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], target));
+          KINDS.forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], target));
         } else {
           const g = { vals: Object.assign({}, r.vals), sources: new Set([r.source]), conflicts: {}, n: 1, k };
           groups.push(g);
-          ['mat', 'mail', 'name', 'tel'].forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], g));
+          KINDS.forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], g));
           if (sig !== null) maps.sig.set(sig, g);
         }
       });
     } else {
       groups = recs.map((r) => ({ vals: r.vals, sources: new Set([r.source]), conflicts: {}, n: 1 }));
     }
+
+    let emptyDropped = 0;
+    if (st.dropEmptyCols) {
+      const before = cols.length;
+      cols = cols.filter((c) => groups.some((g) => g.vals[c.id] !== undefined));
+      emptyDropped = before - cols.length;
+    }
     groups = groups.filter((g) => cols.some((c) => g.vals[c.id] !== undefined));
 
-    // Tri
+    // Tri (principal + secondaire)
     let keys = [];
+    const resolve = (id) => (id && id !== 'none' && id !== 'auto' ? cols.find((x) => x.id === (into.get(id) || id)) : null);
     if (st.sortBy === 'auto') {
       const g = (id) => cols.find((c) => c.group === id);
-      if (g('nom')) keys = [g('nom'), g('prenom')].filter(Boolean);
-      else if (g('nomcomplet')) keys = [g('nomcomplet')];
-      else if (g('matricule')) keys = [g('matricule')];
+      if (g('nom')) keys = [g('nom'), g('prenom')].filter(Boolean).map((c) => ({ c, dir: st.sortDir === 'desc' ? -1 : 1 }));
+      else if (g('nomcomplet')) keys = [{ c: g('nomcomplet'), dir: st.sortDir === 'desc' ? -1 : 1 }];
+      else if (g('matricule')) keys = [{ c: g('matricule'), dir: st.sortDir === 'desc' ? -1 : 1 }];
     } else if (st.sortBy && st.sortBy !== 'none') {
-      const c = cols.find((x) => x.id === st.sortBy);
-      if (c) keys = [c];
+      const c = resolve(st.sortBy);
+      if (c) keys.push({ c, dir: st.sortDir === 'desc' ? -1 : 1 });
+      const c2 = resolve(st.sortBy2);
+      if (c2 && (!c || c2.id !== c.id)) keys.push({ c: c2, dir: st.sortDir2 === 'desc' ? -1 : 1 });
     }
     if (keys.length) {
-      const dir = st.sortDir === 'desc' ? -1 : 1;
       groups = groups.slice().sort((x, y) => {
-        for (const k of keys) {
-          const a = x.vals[k.id];
-          const b = y.vals[k.id];
+        for (const { c, dir } of keys) {
+          const a = x.vals[c.id];
+          const b = y.vals[c.id];
           if (a === undefined || b === undefined) {
             if (a === undefined && b === undefined) continue;
             return a === undefined ? 1 : -1;
           }
-          const c = compare(a, b);
-          if (c) return c * dir;
+          const r = compare(a, b);
+          if (r) return r * dir;
         }
         return 0;
       });
@@ -935,9 +1012,9 @@
       return out;
     });
 
-    const headMeta = (st.numbering ? [{ variants: [], merged: false }] : [])
-      .concat(cols.map((c) => ({ variants: c.meta.variants, merged: c.meta.variants.length > 1 && !c.meta.reasons.includes('déduit'), low: c.meta.low })))
-      .concat(st.source ? [{ variants: [], merged: false }] : []);
+    const headMeta = (st.numbering ? [{ variants: [], merged: false, group: 'index' }] : [])
+      .concat(cols.map((c) => ({ variants: c.meta.variants, merged: c.meta.variants.length > 1 && !c.meta.reasons.includes('déduit'), low: c.meta.low, group: c.group, type: c.meta.type })))
+      .concat(st.source ? [{ variants: [], merged: false, group: 'source' }] : []);
 
     return {
       headers,
@@ -946,11 +1023,12 @@
       conflictMap,
       conflictCount,
       absorbed,
+      emptyDropped,
       combinedRows: groups.filter((g) => g.n > 1).length,
-      sortedBy: keys.map((k) => k.label),
+      sortedBy: keys.map((k) => k.c.label),
       columnCount: cols.length,
     };
   }
 
-  return { analyze, build, dateToText, tokens, resolveGroup, readSheet, splitName, parseDateText };
+  return { analyze, build, dateToText, tokens, resolveGroup, readSheet, splitName, parseDateText, formatPhone, EMAIL_RE, phoneDigits };
 });

@@ -1,15 +1,28 @@
 <!doctype html>
-<html lang="fr">
+<html lang="fr" data-theme="light" data-accent="blue" data-density="comfortable" data-motion="system">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <title>MayaExcel – Fusionnez vos fichiers Excel en un seul tableau</title>
-  <meta name="description" content="Déposez plusieurs fichiers Excel : MayaExcel aligne les colonnes, range les lignes et vous rend un seul tableau propre. Gratuit, sur votre téléphone ou votre ordinateur.">
+  <meta name="description" content="Déposez plusieurs fichiers Excel : MayaExcel aligne les colonnes, regroupe les doublons et vous rend un seul tableau propre. Gratuit, sur téléphone et ordinateur, même sans connexion.">
   <meta name="color-scheme" content="light dark">
-  <meta name="theme-color" content="#0A3D2E" media="(prefers-color-scheme: light)">
-  <meta name="theme-color" content="#0B1A15" media="(prefers-color-scheme: dark)">
+  <meta name="theme-color" content="#ffffff" id="metaTheme">
+  <script>
+    /* Applique le thème avant l'affichage (évite le flash blanc en mode sombre). */
+    try {
+      var s = JSON.parse(localStorage.getItem('maya.settings.v3') || '{}');
+      var t = s.theme || 'system';
+      var dark = t === 'dark' || (t === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+      var r = document.documentElement;
+      r.dataset.theme = dark ? 'dark' : 'light';
+      if (s.accent) r.dataset.accent = s.accent;
+      if (s.density) r.dataset.density = s.density;
+      if (s.motion) r.dataset.motion = s.motion;
+      if (s.fontScale) r.style.setProperty('--fs', s.fontScale / 100);
+      document.getElementById('metaTheme').setAttribute('content', dark ? '#0a0e17' : '#ffffff');
+    } catch (e) {}
+  </script>
 
-  <link rel="manifest" href="/manifest.webmanifest">
   <link rel="icon" href="/icons/favicon.svg" type="image/svg+xml">
   <link rel="icon" href="/icons/favicon-32.png" sizes="32x32" type="image/png">
   <link rel="icon" href="/favicon.ico" sizes="48x48">
@@ -17,7 +30,6 @@
   <meta name="apple-mobile-web-app-capable" content="yes">
   <meta name="mobile-web-app-capable" content="yes">
   <meta name="apple-mobile-web-app-title" content="MayaExcel">
-  <meta name="apple-mobile-web-app-status-bar-style" content="default">
 
   <link rel="canonical" href="__SITE_URL__/">
   <meta property="og:type" content="website">
@@ -37,21 +49,18 @@
   <meta name="twitter:description" content="Fusion intelligente de fichiers Excel, gratuite, sur téléphone ou ordinateur.">
   <meta name="twitter:image" content="__SITE_URL__/og-image.png">
   <meta name="twitter:image:alt" content="MayaExcel : plusieurs fichiers Excel fusionnés en un seul tableau">
-  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"MayaExcel","url":"__SITE_URL__/","applicationCategory":"BusinessApplication","operatingSystem":"Any","inLanguage":"fr","description":"Fusionne plusieurs fichiers Excel en un seul tableau propre et trié.","offers":{"@type":"Offer","price":"0","priceCurrency":"XOF"}}</script>
+  <script type="application/ld+json">{"@context":"https://schema.org","@type":"WebApplication","name":"MayaExcel","url":"__SITE_URL__/","applicationCategory":"BusinessApplication","operatingSystem":"Android, Windows, Web","inLanguage":"fr","description":"Fusionne plusieurs fichiers Excel en un seul tableau propre et trié.","offers":{"@type":"Offer","price":"0","priceCurrency":"XOF"}}</script>
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Bricolage+Grotesque:opsz,wght@12..96,500..800&family=Figtree:wght@400..700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="/css/fonts.css">
   <link rel="stylesheet" href="/css/style.css">
 </head>
 <body>
-  <!-- Symboles réutilisables -->
   <svg width="0" height="0" style="position:absolute" aria-hidden="true">
     <defs>
-      <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1">
-        <stop offset="0" stop-color="#0A3D2E"/>
-        <stop offset="1" stop-color="#0E9F67"/>
-      </linearGradient>
+      <linearGradient id="mg" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#0B1220"/><stop offset="1" stop-color="#2B3758"/></linearGradient>
       <symbol id="logo" viewBox="0 0 512 512">
         <rect width="512" height="512" rx="116" fill="url(#mg)"/>
         <g fill="#fff">
@@ -61,10 +70,32 @@
           <rect x="106" y="292" width="52" height="52" rx="11"/><rect x="354" y="292" width="52" height="52" rx="11"/>
           <rect x="106" y="354" width="52" height="52" rx="11"/><rect x="354" y="354" width="52" height="52" rx="11"/>
         </g>
-        <rect x="230" y="230" width="52" height="52" rx="11" fill="#FFC233"/>
+        <rect x="230" y="230" width="52" height="52" rx="11" fill="#FFB020"/>
       </symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h9M17 6h3M4 12h3M11 12h9M4 18h11M19 18h1"/><circle cx="15" cy="6" r="2"/><circle cx="9" cy="12" r="2"/><circle cx="17" cy="18" r="2"/></symbol>
+      <symbol id="i-sun" viewBox="0 0 24 24"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></symbol>
+      <symbol id="i-moon" viewBox="0 0 24 24"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></symbol>
+      <symbol id="i-download" viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4M4 20h16"/></symbol>
+      <symbol id="i-copy" viewBox="0 0 24 24"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V6a2 2 0 0 1 2-2h9"/></symbol>
+      <symbol id="i-share" viewBox="0 0 24 24"><path d="M12 16V4m0 0L8 8m4-4l4 4M5 12v6a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="11" cy="11" r="7"/><path d="M20 20l-3.5-3.5"/></symbol>
+      <symbol id="i-up" viewBox="0 0 24 24"><path d="M12 19V5m0 0l-6 6m6-6l6 6"/></symbol>
+      <symbol id="i-down" viewBox="0 0 24 24"><path d="M12 5v14m0 0l-6-6m6 6l6-6"/></symbol>
+      <symbol id="i-x" viewBox="0 0 24 24"><path d="M6 6l12 12M18 6L6 18"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="M5 12l5 5L20 7"/></symbol>
+      <symbol id="i-phone" viewBox="0 0 24 24"><rect x="7" y="2" width="10" height="20" rx="2.5"/><path d="M11 18h2"/></symbol>
+      <symbol id="i-monitor" viewBox="0 0 24 24"><rect x="2" y="4" width="20" height="13" rx="2"/><path d="M8 21h8M12 17v4"/></symbol>
+      <symbol id="i-paste" viewBox="0 0 24 24"><rect x="8" y="3" width="8" height="4" rx="1"/><path d="M8 5H7a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2h-1"/></symbol>
+      <symbol id="i-alert" viewBox="0 0 24 24"><path d="M12 3l10 18H2z"/><path d="M12 10v5M12 18h.01"/></symbol>
+      <symbol id="i-table" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M3 10h18M9 4v16"/></symbol>
+      <symbol id="i-columns" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="M9 4v16M15 4v16"/></symbol>
+      <symbol id="i-shield" viewBox="0 0 24 24"><path d="M12 3l8 3v6c0 5-3.5 8-8 9-4.5-1-8-4-8-9V6z"/><path d="M9 12l2 2 4-4"/></symbol>
+      <symbol id="i-reset" viewBox="0 0 24 24"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5"/></symbol>
     </defs>
   </svg>
+
+  <a class="skip" href="#main">Aller au contenu</a>
 
   <header class="top" id="top">
     <div class="wrap top-in">
@@ -72,24 +103,33 @@
         <svg class="brand-mark" aria-hidden="true"><use href="#logo"/></svg>
         <span>MayaExcel</span>
       </a>
-      <button type="button" class="btn btn-ghost btn-small" id="installBtn" hidden>Installer l’application</button>
+      <div class="top-actions">
+        <button type="button" class="btn btn-ghost btn-small" id="getAppBtn" hidden><svg class="ic"><use href="#i-download"/></svg><span id="getAppLabel">Télécharger l’app</span></button>
+        <button type="button" class="icon-btn" id="themeBtn" aria-label="Changer de thème" title="Thème clair / sombre"><svg class="ic" id="themeIcon"><use href="#i-moon"/></svg></button>
+        <button type="button" class="icon-btn" id="settingsBtn" aria-label="Réglages" title="Réglages (Ctrl + ,)"><svg class="ic"><use href="#i-sliders"/></svg><span class="dot-badge" id="settingsBadge" hidden></span></button>
+      </div>
     </div>
   </header>
 
-  <div class="wrap">
-
+  <div class="wrap" id="page">
     <aside class="install-strip" id="installStrip" hidden>
       <svg class="install-mark" aria-hidden="true"><use href="#logo"/></svg>
-      <p>Ajoutez MayaExcel à l’écran d’accueil de votre téléphone.</p>
-      <button type="button" class="btn btn-primary btn-small" id="installStripBtn">Installer</button>
-      <button type="button" class="icon-btn" id="installDismiss" aria-label="Fermer">×</button>
+      <p id="installText">Installez l’application MayaExcel.</p>
+      <button type="button" class="btn btn-primary btn-small" id="installStripBtn">Télécharger</button>
+      <button type="button" class="icon-btn" id="installDismiss" aria-label="Fermer"><svg class="ic"><use href="#i-x"/></svg></button>
     </aside>
 
-    <main>
-      <section class="hero">
+    <main id="main">
+      <section class="hero" id="hero">
         <div class="hero-text">
+          <p class="eyebrow">Fusion intelligente de fichiers Excel</p>
           <h1>Dix fichiers Excel.<br><span class="h1-b">Un seul tableau.</span></h1>
           <p class="lead">Chaque personne envoie son fichier. MayaExcel repère les colonnes, regroupe celles qui veulent dire la même chose, range les lignes et vous rend un fichier propre.</p>
+          <ul class="points">
+            <li><svg class="ic"><use href="#i-check"/></svg>Colonnes reconnues même avec des noms différents</li>
+            <li><svg class="ic"><use href="#i-check"/></svg>Une personne dans plusieurs fichiers : une seule ligne</li>
+            <li><svg class="ic"><use href="#i-check"/></svg>Sur votre appareil, sans envoi sur Internet</li>
+          </ul>
         </div>
 
         <div class="drop" id="drop" tabindex="0" role="button" aria-label="Choisir des fichiers Excel">
@@ -110,12 +150,16 @@
               <rect x="176" y="91" width="34" height="10" rx="3" class="art-fill f3"/><rect x="218" y="91" width="34" height="10" rx="3" class="art-fill f3"/><rect x="260" y="91" width="32" height="10" rx="3" class="art-fill f3"/>
             </g>
           </svg>
-          <p class="drop-title">Déposez vos fichiers Excel ici</p>
-          <p class="drop-sub">Format .xlsx, .xls ou .csv. Autant de fichiers que vous voulez.</p>
-          <button type="button" class="btn btn-primary" id="pickBtn">Choisir des fichiers</button>
-          <input type="file" id="fileInput" multiple accept=".xlsx,.xlsm,.xls,.csv,.ods,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+          <div class="drop-body">
+            <p class="drop-title" id="dropTitle">Déposez vos fichiers Excel ici</p>
+            <p class="drop-sub">.xlsx, .xls, .csv, .ods · autant de fichiers que vous voulez</p>
+          </div>
+          <div class="drop-actions">
+            <button type="button" class="btn btn-primary" id="pickBtn"><svg class="ic"><use href="#i-plus"/></svg>Choisir des fichiers</button>
+            <button type="button" class="btn btn-ghost" id="pasteBtn"><svg class="ic"><use href="#i-paste"/></svg>Coller un tableau</button>
+          </div>
           <button type="button" class="link-btn" id="demoBtn">Voir un exemple avec 3 fichiers</button>
-          <p class="drop-note">Vos fichiers restent sur votre appareil : rien n’est envoyé sur Internet.</p>
+          <input type="file" id="fileInput" multiple accept=".xlsx,.xlsm,.xls,.csv,.ods,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
         </div>
       </section>
 
@@ -123,10 +167,10 @@
         <div class="block-head">
           <h2 id="filesTitle"><span class="step">1</span> Vos fichiers <span class="count" id="filesCount"></span></h2>
           <div class="block-tools">
-            <button type="button" class="btn btn-ghost btn-small" id="addMoreBtn">Ajouter</button>
             <button type="button" class="btn btn-quiet btn-small" id="clearBtn">Tout effacer</button>
           </div>
         </div>
+        <p class="hint-line" id="filesHint" hidden>L’ordre compte : en cas de valeurs différentes, le fichier placé en premier est prioritaire.</p>
         <ul class="files" id="filesList"></ul>
       </section>
 
@@ -151,65 +195,85 @@
         </div>
 
         <div id="resultBody">
-        <p class="summary" id="summary"></p>
-        <ul class="insights" id="insights"></ul>
+          <p class="summary" id="summary"></p>
+          <ul class="insights" id="insights"></ul>
 
-        <div class="panel settings" id="settings">
-          <div class="field">
-            <label for="sortBy">Trier par</label>
-            <div class="field-row">
+          <div class="toolbar" id="toolbar">
+            <label class="search" for="searchInput">
+              <svg class="ic"><use href="#i-search"/></svg>
+              <input type="search" id="searchInput" placeholder="Rechercher dans le tableau" autocomplete="off" aria-label="Rechercher dans le tableau">
+            </label>
+            <div class="sorter">
+              <label for="sortBy">Trier par</label>
               <select id="sortBy"></select>
-              <button type="button" class="btn btn-ghost dir" id="sortDir" aria-label="Sens du tri"></button>
+              <button type="button" class="btn btn-ghost btn-small dir" id="sortDir" aria-label="Sens du tri"></button>
+            </div>
+            <button type="button" class="btn btn-ghost btn-small" id="toolbarSettings"><svg class="ic"><use href="#i-sliders"/></svg>Réglages</button>
+          </div>
+
+          <div class="tabs" role="tablist" aria-label="Affichage du résultat">
+            <button type="button" role="tab" class="tab" id="tabTable" data-tab="table" aria-selected="true" aria-controls="panelTable"><svg class="ic"><use href="#i-table"/></svg>Tableau</button>
+            <button type="button" role="tab" class="tab" id="tabCols" data-tab="cols" aria-selected="false" aria-controls="panelCols" tabindex="-1"><svg class="ic"><use href="#i-columns"/></svg>Colonnes</button>
+            <button type="button" role="tab" class="tab" id="tabCheck" data-tab="check" aria-selected="false" aria-controls="panelCheck" tabindex="-1"><svg class="ic"><use href="#i-shield"/></svg>Contrôle<span class="tab-count" id="checkCount" hidden></span></button>
+          </div>
+
+          <div class="tabpanel" id="panelTable" role="tabpanel" aria-labelledby="tabTable">
+            <div class="fbar" aria-live="polite"><span class="fb-ref" id="fbRef">A1</span><span class="fb-val" id="fbVal">Touchez une cellule pour voir son contenu</span></div>
+            <div class="sheet" id="sheet" tabindex="0" aria-label="Aperçu du tableau fusionné"></div>
+            <p class="sheet-note" id="sheetNote"></p>
+            <p class="legend"><span class="merged-dot"></span> colonne regroupée <span class="legend-sep"></span> <span class="conf-sample">abc</span> valeurs différentes selon les fichiers</p>
+          </div>
+
+          <div class="tabpanel" id="panelCols" role="tabpanel" aria-labelledby="tabCols" hidden>
+            <p class="cols-help">Voici ce que MayaExcel a compris. Renommez, masquez ou déplacez les colonnes. Si deux colonnes ont été regroupées à tort, touchez ✂ sur l’intitulé pour les séparer ; à l’inverse, « Rattacher à » les rassemble.</p>
+            <ol class="cols-list" id="colsList"></ol>
+          </div>
+
+          <div class="tabpanel" id="panelCheck" role="tabpanel" aria-labelledby="tabCheck" hidden></div>
+
+          <div class="actions" id="actions">
+            <div class="actions-main">
+              <button type="button" class="btn btn-primary btn-big" id="dlBtn"><svg class="ic"><use href="#i-download"/></svg><span id="dlLabel">Télécharger</span></button>
+              <select id="formatSel" aria-label="Format du fichier"></select>
+            </div>
+            <div class="actions-side">
+              <button type="button" class="btn btn-ghost btn-big" id="copyBtn" title="Copier le tableau pour le coller dans Excel"><svg class="ic"><use href="#i-copy"/></svg><span>Copier</span></button>
+              <button type="button" class="btn btn-ghost btn-big" id="shareBtn" hidden><svg class="ic"><use href="#i-share"/></svg><span>Partager</span></button>
             </div>
           </div>
-          <div class="toggles">
-            <label class="check"><input type="checkbox" id="optCombine"> <span>Regrouper les lignes de la même personne</span></label>
-            <label class="check"><input type="checkbox" id="optSplit"> <span>Séparer Nom et Prénom automatiquement</span></label>
-            <label class="check"><input type="checkbox" id="optClean"> <span>Harmoniser majuscules et formats</span></label>
-            <label class="check"><input type="checkbox" id="optNumber"> <span>Numéroter les lignes</span></label>
-            <label class="check"><input type="checkbox" id="optSource"> <span>Ajouter le fichier d’origine</span></label>
-            <label class="check"><input type="checkbox" id="optSheets"> <span>Lire toutes les feuilles de chaque fichier</span></label>
-          </div>
-        </div>
-
-        <details class="panel cols" id="colsPanel">
-          <summary><span id="colsSummary">Colonnes</span></summary>
-          <p class="cols-help">Voici ce que MayaExcel a compris. Renommez, masquez ou déplacez les colonnes. Si deux colonnes ont été regroupées à tort, touchez ✂ sur l’intitulé pour les séparer ; à l’inverse, « Rattacher à » les rassemble.</p>
-          <ol class="cols-list" id="colsList"></ol>
-        </details>
-
-        <div class="sheet-wrap">
-          <div class="fbar" aria-live="polite"><span class="fb-ref" id="fbRef">A1</span><span class="fb-val" id="fbVal">Touchez une cellule pour voir son contenu</span></div>
-          <div class="sheet" id="sheet" tabindex="0" aria-label="Aperçu du tableau fusionné"></div>
-          <p class="sheet-note" id="sheetNote"></p>
-          <p class="legend"><span class="merged-dot"></span> colonne regroupée <span class="legend-sep"></span> <span class="conf-sample">abc</span> valeurs différentes selon les fichiers (la première est gardée)</p>
-        </div>
-
-        <div class="actions" id="actions">
-          <button type="button" class="btn btn-primary btn-big" id="dlXlsx">Télécharger en Excel</button>
-          <button type="button" class="btn btn-ghost btn-big" id="dlCsv">CSV</button>
-        </div>
         </div>
       </section>
     </main>
 
     <footer class="foot">
-      <p><strong>MayaExcel</strong> traite tout sur votre appareil. Une fois installée, l’application fonctionne aussi sans connexion.</p>
+      <p><strong>MayaExcel</strong> traite tout sur votre appareil, rien n’est envoyé sur Internet. <button type="button" class="link-inline" id="footApp" hidden>Télécharger l’application</button></p>
     </footer>
   </div>
 
-  <dialog id="iosDialog" class="dialog" aria-labelledby="iosTitle">
-    <h2 id="iosTitle">Installer MayaExcel sur iPhone</h2>
-    <ol>
-      <li>Ouvrez cette page dans <strong>Safari</strong>.</li>
-      <li>Touchez le bouton <strong>Partager</strong> (le carré avec une flèche vers le haut).</li>
-      <li>Choisissez <strong>Sur l’écran d’accueil</strong>, puis <strong>Ajouter</strong>.</li>
-    </ol>
-    <form method="dialog"><button class="btn btn-primary" value="ok">J’ai compris</button></form>
+  <dialog id="settingsDlg" class="drawer" aria-labelledby="settingsTitle">
+    <div class="drawer-head">
+      <h2 id="settingsTitle">Réglages</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div class="drawer-tabs" id="settingsTabs" role="tablist" aria-label="Catégories de réglages"></div>
+    <div class="drawer-body" id="settingsBody"></div>
+    <div class="drawer-foot">
+      <button type="button" class="btn btn-quiet" id="resetSettings"><svg class="ic"><use href="#i-reset"/></svg>Tout réinitialiser</button>
+      <button type="button" class="btn btn-primary" data-close>Terminer</button>
+    </div>
+  </dialog>
+
+  <dialog id="appDlg" class="dialog" aria-labelledby="appTitle">
+    <div class="drawer-head">
+      <h2 id="appTitle">Télécharger l’application</h2>
+      <button type="button" class="icon-btn" data-close aria-label="Fermer"><svg class="ic"><use href="#i-x"/></svg></button>
+    </div>
+    <div id="appBody"></div>
   </dialog>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+  <script src="/js/config.js"></script>
   <script src="/js/merge.js"></script>
   <script src="/js/app.js"></script>
 </body>

@@ -3,10 +3,15 @@ name: Construire les applications (APK + EXE)
 on:
   workflow_dispatch:
   push:
+    branches: [main, master]
     tags: ['v*']
 
 permissions:
   contents: write
+
+concurrency:
+  group: build-apps
+  cancel-in-progress: true
 
 jobs:
   web:
@@ -54,25 +59,35 @@ jobs:
         with: { name: www, path: desktop/www }
       - uses: actions/setup-node@v4
         with: { node-version: 20 }
-      - name: Installateur Windows
+      - name: Installateur et version portable
         working-directory: desktop
-        env: { MAYA_KIND: Installateur }
         run: |
           npm install
-          npx electron-builder --win nsis --publish never
-      - name: Version portable (sans installation)
-        working-directory: desktop
-        env: { MAYA_KIND: Portable }
-        run: npx electron-builder --win portable --publish never
+          npx electron-builder --win --publish never
       - uses: actions/upload-artifact@v4
         with: { name: MayaExcel-Windows-EXE, path: desktop/release/*.exe }
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
     needs: [android, windows]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - uses: actions/download-artifact@v4
         with: { path: artifacts, merge-multiple: true }
+      - name: Déplacer le tag « latest »
+        run: |
+          git config user.name "github-actions"
+          git config user.email "actions@github.com"
+          git tag -f latest
+          git push -f origin latest
       - uses: softprops/action-gh-release@v2
-        with: { files: 'artifacts/*' }
+        with:
+          tag_name: latest
+          name: MayaExcel (dernière version)
+          make_latest: true
+          body: |
+            Téléchargements directs utilisés par le site :
+            - MayaExcel.apk (Android)
+            - MayaExcel-Setup.exe (Windows, installateur)
+            - MayaExcel-Portable.exe (Windows, sans installation)
+          files: artifacts/*

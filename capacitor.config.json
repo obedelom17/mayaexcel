@@ -2,6 +2,10 @@
   "appId": "tg.mayaexcel.app",
   "appName": "MayaExcel",
   "webDir": "dist",
-  "server": { "androidScheme": "https" },
-  "android": { "backgroundColor": "#F3F6F4" }
+  "server": {
+    "androidScheme": "https"
+  },
+  "android": {
+    "backgroundColor": "#FFFFFF"
+  }
 }

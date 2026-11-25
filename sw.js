@@ -1,8 +1,8 @@
 /* MayaExcel – service worker : fonctionne hors connexion après la première visite */
-const VERSION = 'mayaexcel-v2';
+const VERSION = 'mayaexcel-v3';
 const SHELL = [
-  '/', '/index.html', '/css/style.css', '/js/merge.js', '/js/app.js',
-  '/manifest.webmanifest', '/icons/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
+  '/', '/index.html', '/css/style.css', '/css/fonts.css', '/js/config.js', '/js/merge.js', '/js/app.js',
+  '/icons/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png',
 ];
 
 self.addEventListener('install', (event) => {
@@ -35,12 +35,12 @@ self.addEventListener('fetch', (event) => {
           }
           return res;
         })
-        .catch(() => caches.match(req).then((hit) => hit || (req.mode === 'navigate' ? caches.match('/index.html') : undefined)))
+        .catch(() => caches.match(req).then((hit) => hit || (req.mode === 'navigate' ? caches.match('/index.html') : Response.error())))
     );
     return;
   }
 
-  // Bibliothèques Excel et polices : cache d'abord, mémorisées à la première utilisation.
+  // Bibliothèques et polices externes : cache d'abord, mémorisées à la première utilisation.
   if (/cdnjs\.cloudflare\.com|cdn\.jsdelivr\.net|fonts\.googleapis\.com|fonts\.gstatic\.com/.test(url.hostname)) {
     event.respondWith(
       caches.match(req).then((hit) =>
