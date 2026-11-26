@@ -1,5 +1,5 @@
 /* MayaExcel – service worker : fonctionne hors connexion après la première visite */
-const VERSION = 'mayaexcel-v3';
+const VERSION = 'mayaexcel-v4';
 const SHELL = [
   '/', '/index.html', '/css/style.css', '/css/fonts.css', '/js/config.js', '/js/merge.js', '/js/app.js',
   '/icons/favicon.svg', '/icons/icon-192.png', '/icons/icon-512.png',

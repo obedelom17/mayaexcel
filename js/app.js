@@ -8,26 +8,29 @@
   const plural = (n, one, many) => n + ' ' + (n > 1 ? many : one);
   const clamp = (n, a, b) => Math.min(b, Math.max(a, n));
   const tick = () => new Promise((r) => setTimeout(r, 0));
+  const isMobile = () => window.matchMedia('(max-width: 899px)').matches;
 
   /* ================================================================== */
   /*  Réglages (mémorisés sur l'appareil)                                */
   /* ================================================================== */
 
-  const KEY = 'maya.settings.v3';
+  const KEY = 'maya.settings.v4';
   const DEFAULTS = {
     // affichage
-    theme: 'system', accent: 'blue', density: 'comfortable', fontScale: 100, motion: 'system',
-    // fusion
-    allSheets: true, splitNames: true, contentMatch: true, sensitivity: 'balanced',
-    headerMode: 'auto', headerRow: 1, combine: true, keyCol: 'auto', conflict: 'first',
+    density: 'comfortable', fontScale: 100, motion: 'system',
+    // lecture et fusion
+    allSheets: true, formDetect: true, multiHeader: true, nullTokens: true, headerMode: 'auto', headerRow: 1,
+    sensitivity: 'balanced', contentMatch: true, splitNames: true,
+    combine: true, personMatch: 'normal', fuzzyNames: true, useBirth: true, keyCol: 'auto', conflict: 'first',
+    ignoreColumns: '', synonyms: '',
     // données
-    clean: true, nomCase: 'upper', prenomCase: 'title', emailLower: true, sexNorm: true, placeCase: true,
-    phoneFormat: 'keep', phoneCC: '228', dateFormat: 'dmy', emptyText: '', dropEmptyCols: true,
+    clean: true, nomCase: 'upper', prenomCase: 'title', emailLower: true, sexNorm: true, normCats: true, placeCase: true,
+    unifyLabels: true, phoneFormat: 'keep', phoneCC: '228', dateFormat: 'dmy', emptyText: '', dropEmptyCols: true,
     // tableau
-    numbering: true, source: false, sortBy: 'auto', sortDir: 'asc', sortBy2: 'none', sortDir2: 'asc', previewRows: 100,
+    numbering: true, source: false, sortBy: 'auto', sortDir: 'asc', sortBy2: 'none', sortDir2: 'asc', previewRows: 500,
     // export
-    format: 'xlsx', fileName: 'MayaExcel-fusion-{date}', zebra: true, freeze: true, autofilter: true,
-    headerColor: 'dark', reportSheet: true, csvSafe: true,
+    format: 'xlsx', fileName: 'MayaExcel-fusion-{date}', zebra: false, freeze: true, autofilter: true,
+    headerColor: 'light', reportSheet: true, csvSafe: true,
   };
 
   function loadSettings() {
@@ -45,27 +48,15 @@
     try { localStorage.setItem(KEY, JSON.stringify(S)); } catch (e) { /* ignoré */ }
   }
 
-  /* ================================================================== */
-  /*  Thème et apparence                                                 */
-  /* ================================================================== */
-
-  const darkQuery = window.matchMedia('(prefers-color-scheme: dark)');
   const motionQuery = window.matchMedia('(prefers-reduced-motion: reduce)');
-  const isDark = () => S.theme === 'dark' || (S.theme === 'system' && darkQuery.matches);
   const reduceMotion = () => S.motion === 'off' || (S.motion === 'system' && motionQuery.matches);
 
   function applyUi() {
     const r = document.documentElement;
-    r.dataset.theme = isDark() ? 'dark' : 'light';
-    r.dataset.accent = S.accent;
     r.dataset.density = S.density;
     r.dataset.motion = S.motion;
     r.style.setProperty('--fs', S.fontScale / 100);
-    $('#metaTheme').setAttribute('content', isDark() ? '#0a0e17' : '#ffffff');
-    $('#themeIcon use').setAttribute('href', isDark() ? '#i-sun' : '#i-moon');
   }
-  const onSystemChange = () => S.theme === 'system' && applyUi();
-  if (darkQuery.addEventListener) darkQuery.addEventListener('change', onSystemChange);
 
   /* ================================================================== */
   /*  Bibliothèques Excel (embarquées, sinon CDN)                        */
@@ -110,24 +101,25 @@
   /* ================================================================== */
 
   const state = {
-    files: [],      // {id,name,size,status:'reading'|'ok'|'error',error,sheets,include}
-    cols: [],       // [{id,key,label,include,into}]
-    overrides: {},  // key → {label, include, into}
-    separate: [],   // intitulés détachés d'un regroupement
-    colOrder: [],   // ordre choisi (clés)
+    files: [],        // {id,name,size,status:'reading'|'ok'|'error',error,sheets,include}
+    cols: [],         // [{id,key,label,include,into}]
+    overrides: {},    // key → {label, include, into}
+    separate: [],     // intitulés détachés d'un regroupement
+    colOrder: [],     // ordre choisi (clés)
+    colW: {},         // largeurs de colonnes choisies (par intitulé)
+    noMerge: new Set(), // enregistrements dissociés à la main
     analysis: null,
     built: null,
     quality: null,
     tab: 'table',
     query: '',
     extraRows: 0,
-    staging: false,
   };
   let uid = 0;
   const MAX_DOM_ROWS = 5000;
 
   /* ================================================================== */
-  /*  Petits utilitaires d'affichage                                     */
+  /*  Utilitaires d'affichage                                            */
   /* ================================================================== */
 
   let toastTimer;
@@ -223,7 +215,7 @@
 
   let chain = Promise.resolve();
   function enqueue(task) {
-    chain = chain.then(task).catch((e) => { console.error(e); state.staging = false; renderResult(); });
+    chain = chain.then(task).catch((e) => { console.error(e); renderAll(); });
     return chain;
   }
 
@@ -248,8 +240,8 @@
     else if (skipped) toast(plural(skipped, 'fichier déjà ajouté', 'fichiers déjà ajoutés') + '.');
     if (!fresh.length) return;
 
-    renderFiles();
-    startStage();
+    if (!state.analysis && isMobile()) setView('sources');
+    renderAll();
     await tick();
 
     for (const entry of fresh) {
@@ -271,18 +263,15 @@
       renderFiles();
       await tick();
     }
-    await endStage();
-    recompute(true);
-    scrollToResult();
+    recompute();
+    afterResult();
   }
 
-  function scrollToResult() {
-    if (state.analysis && state.built && state.built.rows.length) {
-      setTimeout(() => $('#resultBlock').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }), 80);
-    }
+  function afterResult() {
+    if (state.analysis && state.built && state.built.rows.length && isMobile()) setView('main');
   }
 
-  /** Tableau copié depuis Excel (texte avec tabulations) → fichier virtuel. */
+  /** Tableau copié depuis Excel (texte avec tabulations) → source virtuelle. */
   function addPastedText(text) {
     if (!/[\t\n]/.test(text)) return false;
     const lines = text.replace(/\r/g, '').split('\n');
@@ -293,12 +282,8 @@
     const n = state.files.filter((f) => /^Tableau collé/.test(f.name)).length + 1;
     enqueue(async () => {
       state.files.push({ id: ++uid, name: 'Tableau collé ' + n, size: text.length, status: 'ok', error: null, include: true, sheets: [{ name: 'Collage', rows }] });
-      renderFiles();
-      startStage();
-      await tick();
-      await endStage();
-      recompute(true);
-      scrollToResult();
+      recompute();
+      afterResult();
     });
     return true;
   }
@@ -312,43 +297,13 @@
     }
   }
 
-  /** Point d'entrée pour injecter des fichiers déjà lus (tests, exemple). */
+  /** Point d'entrée pour injecter des fichiers déjà lus (exemple, tests). */
   function addParsedFiles(list) {
     list.forEach((f) => state.files.push({ id: ++uid, name: f.name, size: f.size || 4096, status: 'ok', error: null, include: true, sheets: f.sheets }));
-    renderFiles();
-    recompute(true);
+    recompute();
+    afterResult();
   }
 
-  /* ---------- Scène « fusion en cours » ---------- */
-  let stageTimers = [];
-  let stageStart = 0;
-
-  function startStage() {
-    state.staging = true;
-    stageStart = Date.now();
-    renderResult();
-    const items = $$('#stageSteps li');
-    items.forEach((li) => (li.className = ''));
-    stageTimers.forEach(clearTimeout);
-    stageTimers = [];
-    items.forEach((li, i) => {
-      stageTimers.push(setTimeout(() => {
-        if (i > 0) items[i - 1].className = 'done';
-        li.className = 'on';
-      }, i * 320));
-    });
-  }
-
-  async function endStage() {
-    const wait = reduceMotion() ? 0 : Math.max(0, 1400 - (Date.now() - stageStart));
-    await new Promise((r) => setTimeout(r, wait));
-    stageTimers.forEach(clearTimeout);
-    $$('#stageSteps li').forEach((li) => (li.className = 'done'));
-    await new Promise((r) => setTimeout(r, reduceMotion() ? 0 : 220));
-    state.staging = false;
-  }
-
-  /* ---------- Exemple : 3 fichiers volontairement différents ---------- */
   function demoFiles() {
     const D = (y, m, d) => new Date(y, m - 1, d);
     return [
@@ -368,6 +323,10 @@
         ['KPETO Sena', '92000000', 'sena.kpeto@exemple.tg', 'F', 'Logisticienne'],
         ['DOSSEH Mawuli', '93001234', 'mawuli@exemple.tg', 'M', 'Chauffeur'],
       ] }] },
+      { name: 'Fiche-Yawo.xlsx', sheets: [{ name: 'Fiche', rows: [
+        ['FICHE INDIVIDUELLE'], [],
+        ['Nom :', 'TOGBE'], ['Prénoms :', 'Yawo'], ['Tél.', '99887766'], ['Fonction :', 'Chauffeur'], ['E-mail', 'yawo.togbe@exemple.tg'], ['Sexe', 'M'],
+      ] }] },
     ];
   }
 
@@ -377,13 +336,10 @@
       state.overrides = {};
       state.separate = [];
       state.colOrder = [];
+      state.noMerge = new Set();
       demoFiles().forEach((f) => state.files.push({ id: ++uid, name: f.name, size: 4096, status: 'ok', error: null, include: true, sheets: f.sheets }));
-      renderFiles();
-      startStage();
-      await tick();
-      await endStage();
-      recompute(true);
-      setTimeout(() => $('#filesBlock').scrollIntoView({ behavior: reduceMotion() ? 'auto' : 'smooth', block: 'start' }), 80);
+      recompute();
+      afterResult();
     });
   }
 
@@ -391,15 +347,14 @@
   /*  Fusion                                                             */
   /* ================================================================== */
 
-  function recompute(enter) {
+  function recompute() {
     const ok = state.files.filter((f) => f.status === 'ok' && f.include !== false);
     if (!ok.length) {
       state.analysis = null;
       state.built = null;
       state.quality = null;
       state.cols = [];
-      renderFiles();
-      renderResult();
+      renderAll();
       return;
     }
     state.analysis = MayaMerge.analyze(
@@ -407,6 +362,8 @@
       {
         allSheets: S.allSheets, splitNames: S.splitNames, separate: state.separate, sensitivity: S.sensitivity,
         contentMatch: S.contentMatch, headerMode: S.headerMode, headerRow: clamp(Number(S.headerRow) || 1, 1, 200),
+        formDetect: S.formDetect, multiHeader: S.multiHeader, nullTokens: S.nullTokens,
+        ignoreColumns: S.ignoreColumns, synonyms: S.synonyms,
       }
     );
     const keyToId = new Map(state.analysis.columns.map((c) => [c.key, c.id]));
@@ -427,8 +384,7 @@
         .map((x) => x.c);
     }
     state.cols = cols;
-    renderFiles();
-    rebuild(true, enter);
+    rebuild(true);
   }
 
   function colIdByKey(key) {
@@ -439,22 +395,24 @@
   function buildSettings() {
     const sortBy = S.sortBy === 'auto' || S.sortBy === 'none' ? S.sortBy : colIdByKey(S.sortBy) || 'auto';
     return {
-      cols: state.cols, source: S.source, numbering: S.numbering, combine: S.combine,
+      cols: state.cols, source: S.source, numbering: S.numbering, combine: S.combine, personMatch: S.personMatch,
+      fuzzyNames: S.fuzzyNames, useBirth: S.useBirth, noMerge: Array.from(state.noMerge),
       keyCol: S.keyCol === 'auto' ? 'auto' : colIdByKey(S.keyCol) || 'auto', conflict: S.conflict,
       clean: S.clean, nomCase: S.nomCase, prenomCase: S.prenomCase, emailLower: S.emailLower, sexNorm: S.sexNorm,
-      placeCase: S.placeCase, phoneFormat: S.phoneFormat, phoneCC: S.phoneCC, dropEmptyCols: S.dropEmptyCols,
+      normCats: S.normCats, placeCase: S.placeCase, unifyLabels: S.unifyLabels, phoneFormat: S.phoneFormat, phoneCC: S.phoneCC,
+      dropEmptyCols: S.dropEmptyCols, fmtDate: (d) => fmtDate(d, S.dateFormat),
       sortBy, sortDir: S.sortDir, sortBy2: S.sortBy2 === 'none' ? 'none' : colIdByKey(S.sortBy2) || 'none', sortDir2: S.sortDir2,
     };
   }
 
-  function rebuild(full, enter) {
+  function rebuild(full) {
     if (!state.analysis) return;
     state.built = MayaMerge.build(state.analysis, buildSettings());
     state.quality = computeQuality();
-    if (full) renderResult(enter);
+    if (full) renderAll();
     else {
       renderSummary();
-      renderTable(true);
+      renderTable();
       renderCheckBadge();
       if (state.tab === 'check') renderCheck();
       updateActions();
@@ -505,25 +463,51 @@
       }
       comp.push({ label: h, filled, pct: n ? filled / n : 0 });
     });
-    dup.forEach((rows, k) => {
+    dup.forEach((rows) => {
       if (rows.length > 1) rows.forEach((i) => add(i, matCol, 'Matricule en double', b.rows[i][matCol]));
     });
     Object.keys(b.conflictMap).forEach((key) => {
       const [r, c] = key.split(':').map(Number);
-      issues.push({ r, c, t: 'Valeurs différentes selon les fichiers', v: 'autre valeur : ' + b.conflictMap[key], warn: true });
+      issues.push({ r, c, t: 'Valeurs différentes selon les sources', v: 'autre valeur : ' + b.conflictMap[key] });
     });
     issues.sort((a, b2) => a.r - b2.r || a.c - b2.c);
     return { issues, comp, bad };
   }
 
   /* ================================================================== */
-  /*  Rendu : fichiers                                                   */
+  /*  Rendu                                                              */
   /* ================================================================== */
 
+  function renderAll() {
+    renderLayout();
+    renderFiles();
+    renderWork();
+    renderActions();
+    updateBadge();
+  }
+
+  function renderLayout() {
+    const hasFiles = state.files.length > 0;
+    $('#appbody').dataset.state = hasFiles ? 'ready' : 'empty';
+    $('#empty').hidden = hasFiles;
+    $('#side').hidden = !hasFiles;
+    $('#work').hidden = !hasFiles;
+    $('#mobilenav').hidden = !hasFiles;
+    $$('#mobilenav [data-nav]').forEach((b) => {
+      const nav = b.dataset.nav;
+      const current = nav === 'sources' ? document.body.dataset.view === 'sources' : document.body.dataset.view === 'main' && state.tab === nav;
+      if (current) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
+    if (!hasFiles) document.body.dataset.view = 'main';
+  }
+
+  function setView(v) {
+    document.body.dataset.view = v;
+    renderLayout();
+  }
+
   function renderFiles() {
-    document.body.classList.toggle('has-files', state.files.length > 0);
-    const block = $('#filesBlock');
-    block.hidden = !state.files.length;
     if (!state.files.length) return;
     $('#filesCount').textContent = '(' + state.files.length + ')';
     $('#filesHint').hidden = state.files.length < 2;
@@ -534,26 +518,26 @@
 
     $('#filesList').innerHTML = state.files
       .map((f, i) => {
-        const ext = (f.name.split('.').pop() || '').toLowerCase().slice(0, 4);
+        const ext = /^Tableau collé/.test(f.name) ? 'txt' : (f.name.split('.').pop() || '').toLowerCase().slice(0, 4);
         let meta;
-        if (f.status === 'reading') meta = '<span class="spin"></span>Lecture en cours…';
+        if (f.status === 'reading') meta = '<span class="spin"></span>Lecture en cours';
         else if (f.status === 'error') meta = esc(f.error);
-        else if (f.include === false) meta = 'Exclu de la fusion';
+        else if (f.include === false) meta = 'Exclue de la fusion';
         else {
           const r = reports.get(f.id);
           if (r) {
             const used = r.sheets.filter((s) => !s.empty).length;
             meta = r.rows ? plural(r.rows, 'ligne', 'lignes') + ' · ' + plural(used, 'feuille', 'feuilles') : 'Aucune donnée trouvée';
             if (r.sheets.some((s) => s.headerless)) meta += ' · sans en-têtes';
+            if (r.sheets.some((s) => s.form)) meta += ' · fiche';
           } else meta = formatSize(f.size);
         }
         const check = f.status === 'ok'
           ? '<input type="checkbox" data-act="toggle" data-id="' + f.id + '" ' + (f.include !== false ? 'checked' : '') + ' aria-label="Inclure ' + esc(f.name) + ' dans la fusion">'
-          : '<span style="width:20px"></span>';
+          : '<span style="width:16px"></span>';
         return (
-          '<li class="file' + (f.status === 'error' ? ' is-error' : '') + (f.status === 'reading' ? ' is-reading' : '') + (f.include === false ? ' is-off' : '') + '" data-id="' + f.id + '">' +
-          check +
-          '<span class="file-ext" aria-hidden="true">' + (/^Tableau collé/.test(f.name) ? 'txt' : esc(ext)) + '</span>' +
+          '<li class="file' + (f.status === 'error' ? ' is-error' : '') + (f.include === false ? ' is-off' : '') + '" data-id="' + f.id + '">' +
+          check + '<span class="file-ext" aria-hidden="true">' + esc(ext) + '</span>' +
           '<div class="file-body"><div class="file-name" title="' + esc(f.name) + '">' + esc(f.name) + '</div><div class="file-meta">' + meta + '</div></div>' +
           '<div class="file-tools">' +
           '<button type="button" class="icon-btn" data-act="up" data-id="' + f.id + '" aria-label="Monter ' + esc(f.name) + '" ' + (i === 0 ? 'disabled' : '') + '><svg class="ic"><use href="#i-up"/></svg></button>' +
@@ -565,84 +549,50 @@
       .join('');
   }
 
-  /* ================================================================== */
-  /*  Rendu : résultat                                                   */
-  /* ================================================================== */
-
-  function renderResult(enter) {
-    const block = $('#resultBlock');
-    if (state.staging) {
-      block.hidden = false;
-      $('#stage').hidden = false;
-      $('#resultBody').hidden = true;
-      return;
-    }
-    $('#stage').hidden = true;
-    block.hidden = !state.analysis;
-    $('#resultBody').hidden = !state.analysis;
-    if (!state.analysis) return;
-
+  function renderWork() {
+    const has = !!(state.analysis && state.built);
+    $('.panels').classList.toggle('no-data', !has);
+    $('#workEmpty').hidden = has;
+    ['#panelTable', '#panelCols', '#panelCheck'].forEach((s) => { if (!has) $(s).hidden = true; });
+    $('#toolbar').hidden = !has;
+    $('.tabs').hidden = !has;
+    $('.summarybar').hidden = !has;
+    $('#statusbar').hidden = !has;
+    if (!has) return;
     renderToolbar();
     renderSummary();
-    renderTable(true);
+    renderTable();
     renderColumns();
     renderCheck();
     renderCheckBadge();
-    renderActions();
-    updateActions();
     setTab(state.tab, true);
-    if (enter && !reduceMotion()) {
-      const body = $('#resultBody');
-      body.classList.remove('enter');
-      void body.offsetWidth;
-      body.classList.add('enter');
-    }
   }
 
-  function animateNumber(el, to) {
-    if (reduceMotion()) { el.textContent = to; return; }
-    const t0 = performance.now();
-    (function step(now) {
-      const k = Math.min(1, (now - t0) / 700);
-      el.textContent = Math.round(to * (1 - Math.pow(1 - k, 3)));
-      if (k < 1) requestAnimationFrame(step);
-    })(t0);
-  }
-  const num = (n) => '<span class="cnt" data-to="' + n + '">' + n + '</span>';
+  const num = (n) => '<span>' + n + '</span>';
 
   function renderSummary() {
     const a = state.analysis;
     const b = state.built;
     if (!a || !b) return;
     const w = (n, one, many) => (n > 1 ? many : one);
-    const notes = [];
-    if (b.sortedBy.length) notes.push('trié par ' + b.sortedBy.join(', '));
-    $('#summary').innerHTML =
-      '<strong>' + num(a.fileCount) + ' ' + w(a.fileCount, 'fichier', 'fichiers') + '</strong> fusionnés en un tableau de <strong>' +
-      num(b.rows.length) + ' ' + w(b.rows.length, 'ligne', 'lignes') + '</strong> et <strong>' + num(b.columnCount) + ' ' + w(b.columnCount, 'colonne', 'colonnes') + '</strong>.' +
-      (notes.length ? '<small>' + esc(notes.join(' · ')) + '</small>' : '');
-    $$('#summary .cnt').forEach((el) => animateNumber(el, Number(el.dataset.to)));
+    $('#summary').innerHTML = num(a.fileCount) + ' ' + w(a.fileCount, 'source', 'sources') + ' · ' + num(b.rows.length) + ' ' + w(b.rows.length, 'ligne', 'lignes') + ' · ' + num(b.columnCount) + ' ' + w(b.columnCount, 'colonne', 'colonnes');
 
-    const chips = [];
-    if (a.mergedColumns) chips.push(['', plural(a.mergedColumns, 'colonne regroupée', 'colonnes regroupées') + ' malgré des noms différents']);
-    if (a.contentColumns) chips.push(['', plural(a.contentColumns, 'colonne reconnue', 'colonnes reconnues') + ' d’après son contenu']);
-    if (a.headerlessSheets) chips.push(['', plural(a.headerlessSheets, 'fichier compris', 'fichiers compris') + ' sans titres de colonnes']);
-    if (a.splitCount && S.splitNames) chips.push(['', plural(a.splitCount, 'nom complet séparé', 'noms complets séparés') + ' en Nom et Prénom']);
-    if (b.combinedRows) chips.push(['', plural(b.combinedRows, 'personne trouvée', 'personnes trouvées') + ' dans plusieurs fichiers']);
-    else if (b.absorbed) chips.push(['', plural(b.absorbed, 'doublon retiré', 'doublons retirés')]);
-    if (b.emptyDropped) chips.push(['', plural(b.emptyDropped, 'colonne vide masquée', 'colonnes vides masquées')]);
-    if (b.conflictCount) chips.push(['warn', plural(b.conflictCount, 'valeur différente', 'valeurs différentes') + ' à vérifier']);
-    $('#insights').innerHTML = chips.map(([c, t]) => '<li class="' + c + '">' + (c === 'warn' ? '<span class="dot"></span>' : '') + esc(t) + '</li>').join('');
-  }
+    const tags = [];
+    if (a.mergedColumns) tags.push(['', plural(a.mergedColumns, 'colonne regroupée', 'colonnes regroupées')]);
+    if (a.contentColumns) tags.push(['', plural(a.contentColumns, 'colonne reconnue par son contenu', 'colonnes reconnues par leur contenu')]);
+    if (a.headerlessSheets) tags.push(['', plural(a.headerlessSheets, 'feuille sans en-têtes', 'feuilles sans en-têtes')]);
+    const forms = a.report.reduce((n, r) => n + r.sheets.filter((s) => s.form).length, 0);
+    if (forms) tags.push(['', plural(forms, 'fiche individuelle', 'fiches individuelles')]);
+    if (a.splitCount && S.splitNames) tags.push(['', plural(a.splitCount, 'nom complet séparé', 'noms complets séparés')]);
+    if (b.combinedRows) tags.push(['', plural(b.combinedRows, 'personne présente dans plusieurs sources', 'personnes présentes dans plusieurs sources')]);
+    else if (b.absorbed) tags.push(['', plural(b.absorbed, 'doublon retiré', 'doublons retirés')]);
+    if (b.emptyDropped) tags.push(['', plural(b.emptyDropped, 'colonne vide masquée', 'colonnes vides masquées')]);
+    if (b.conflictCount) tags.push(['warn', plural(b.conflictCount, 'valeur à vérifier', 'valeurs à vérifier')]);
+    $('#insights').innerHTML = tags.map(([c, t]) => '<li class="' + c + '">' + esc(t) + '</li>').join('');
 
-  function sortOptionsHtml(current, withAuto) {
-    let html = withAuto ? '<option value="auto">Automatique' + (autoSortLabel() ? ' (' + esc(autoSortLabel()) + ')' : '') + '</option>' : '<option value="none">Aucun</option>';
-    if (withAuto) html += '<option value="none">Ordre des fichiers</option>';
-    state.cols.filter((c) => c.include && !c.into).forEach((c) => {
-      html += '<option value="' + esc(c.key) + '">' + esc(c.label || 'Colonne') + '</option>';
-    });
-    void current;
-    return html;
+    $('#stRows').textContent = plural(b.rows.length, 'ligne', 'lignes');
+    $('#stCols').textContent = plural(b.columnCount, 'colonne', 'colonnes');
+    $('#stSort').textContent = b.sortedBy.length ? 'Tri : ' + b.sortedBy.join(', ') : 'Ordre des sources';
   }
 
   function autoSortLabel() {
@@ -657,15 +607,17 @@
 
   function renderToolbar() {
     const sel = $('#sortBy');
-    sel.innerHTML = sortOptionsHtml(S.sortBy, true);
-    if (![...sel.options].some((o) => o.value === S.sortBy)) sel.value = 'auto';
-    else sel.value = S.sortBy;
+    let html = '<option value="auto">Automatique' + (autoSortLabel() ? ' (' + esc(autoSortLabel()) + ')' : '') + '</option><option value="none">Ordre des sources</option>';
+    state.cols.filter((c) => c.include && !c.into).forEach((c) => { html += '<option value="' + esc(c.key) + '">' + esc(c.label || 'Colonne') + '</option>'; });
+    sel.innerHTML = html;
+    sel.value = [...sel.options].some((o) => o.value === S.sortBy) ? S.sortBy : 'auto';
     const dir = $('#sortDir');
     dir.textContent = S.sortDir === 'asc' ? 'A → Z' : 'Z → A';
     dir.disabled = sel.value === 'none';
     $('#searchInput').value = state.query;
   }
 
+  /* ---------- Tableau ---------- */
   function visibleRows() {
     const b = state.built;
     const q = state.query.trim().toLowerCase();
@@ -676,37 +628,60 @@
     return idx;
   }
 
-  function renderTable(animate) {
+  function colWidth(h, j, b) {
+    if (state.colW[h]) return state.colW[h];
+    if (b.headMeta[j].group === 'index') return 56;
+    let len = String(h).length + 5;
+    const sample = Math.min(b.rows.length, 40);
+    for (let i = 0; i < sample; i++) {
+      const t = cellText(b.rows[i][j]);
+      if (t.length > len) len = t.length;
+    }
+    return clamp(Math.round(len * 8.2 + 24), 80, 320);
+  }
+
+  const RN_W = 48;
+
+  function renderTable() {
     const b = state.built;
     const box = $('#sheet');
+    const note = $('#sheetNote');
     if (!b || !b.rows.length) {
-      box.innerHTML = '<p class="empty-note">Aucune ligne à afficher. Vérifiez que des colonnes sont affichées.</p>';
-      $('#sheetNote').textContent = '';
+      box.innerHTML = '<p class="empty-note-table">Aucune ligne à afficher. Vérifiez que des colonnes sont affichées.</p>';
+      note.textContent = '';
       return;
     }
     const q = state.query.trim().toLowerCase();
     const matches = visibleRows();
-    const limit = clamp(Math.max(Number(S.previewRows) || 100, state.extraRows), 10, MAX_DOM_ROWS);
+    const limit = clamp(Math.max(Number(S.previewRows) || 500, state.extraRows), 10, MAX_DOM_ROWS);
     const shown = matches.slice(0, limit);
     const bad = state.quality ? state.quality.bad : new Set();
 
     if (!shown.length) {
-      box.innerHTML = '<p class="empty-note">Aucun résultat pour « ' + esc(state.query) + ' ».</p>';
-      $('#sheetNote').textContent = '';
+      box.innerHTML = '<p class="empty-note-table">Aucun résultat pour « ' + esc(state.query) + ' ».</p>';
+      note.textContent = '';
       return;
     }
 
-    let html = '<table class="grid"><thead><tr class="letters"><th class="rn"></th>';
-    b.headers.forEach((_, j) => (html += '<th scope="col">' + colLetter(j) + '</th>'));
-    html += '</tr><tr class="heads"><th class="rn"></th>';
+    const widths = b.headers.map((h, j) => colWidth(h, j, b));
+    const total = RN_W + widths.reduce((a, c) => a + c, 0);
+    const sortKey = S.sortBy;
+
+    let html = '<table class="grid" style="width:' + total + 'px"><colgroup><col style="width:' + RN_W + 'px">' + widths.map((w) => '<col style="width:' + w + 'px">').join('') + '</colgroup><thead><tr><th class="rn"></th>';
     b.headers.forEach((h, j) => {
       const m = b.headMeta[j];
-      const dot = m.merged ? '<span class="merged-dot" title="Regroupe : ' + esc(m.variants.join(', ')) + '"></span>' : '';
-      html += '<th scope="col">' + esc(h) + dot + '</th>';
+      const col = m.id ? state.cols.find((c) => c.id === m.id) : null;
+      const sorted = col && sortKey === col.key;
+      const ind = sorted ? '<span class="sort-ind" aria-hidden="true">' + (S.sortDir === 'asc' ? '▲' : '▼') + '</span>' : '';
+      const link = m.merged ? '<svg class="ic th-link" aria-label="Colonne regroupée"><title>Regroupe : ' + esc(m.variants.join(', ')) + '</title><use href="#i-link"/></svg>' : '';
+      const label = col
+        ? '<button type="button" class="th-btn" data-sort="' + esc(col.key) + '" title="Trier par « ' + esc(h) + ' »">' + esc(h) + '</button>'
+        : '<span class="th-btn" style="cursor:default">' + esc(h) + '</span>';
+      html += '<th scope="col" aria-sort="' + (sorted ? (S.sortDir === 'asc' ? 'ascending' : 'descending') : 'none') + '"><div class="th-in">' + label + ind + link + '</div><span class="rs" data-j="' + j + '" role="separator" aria-label="Redimensionner la colonne"></span></th>';
     });
     html += '</tr></thead><tbody>';
-    shown.forEach((ri, k) => {
-      html += '<tr style="--i:' + k + '"><td class="rn">' + (ri + 1) + '</td>';
+    shown.forEach((ri) => {
+      html += '<tr><td class="rn">' + (ri + 1) + '</td>';
       b.rows[ri].forEach((v, j) => {
         const t = cellText(v);
         const alt = b.conflictMap[ri + ':' + j];
@@ -720,49 +695,65 @@
     });
     html += '</tbody></table>';
     box.innerHTML = html;
-    if (animate && !reduceMotion()) {
-      box.classList.remove('cascade');
-      void box.offsetWidth;
-      box.classList.add('cascade');
-    }
-    $('#fbRef').textContent = 'A1';
-    $('#fbVal').textContent = 'Touchez une cellule pour voir son contenu';
+    $('#fbRef').textContent = '—';
+    $('#fbVal').textContent = 'Sélectionnez une cellule';
     $('#fbVal').classList.remove('has');
 
-    let note;
-    if (q) note = plural(matches.length, 'ligne correspond', 'lignes correspondent') + ' à la recherche' + (matches.length > limit ? ' (' + limit + ' affichées)' : '') + '.';
-    else if (b.rows.length > limit) note = 'Aperçu des ' + limit + ' premières lignes sur ' + b.rows.length + '. Le fichier téléchargé contient tout (changez la taille de l’aperçu dans les réglages).';
-    else note = 'Aperçu complet. Faites défiler pour voir toutes les colonnes.';
-    $('#sheetNote').textContent = note;
+    let text;
+    if (q) text = plural(matches.length, 'ligne correspond', 'lignes correspondent') + ' à la recherche' + (matches.length > limit ? ' (' + limit + ' affichées)' : '') + '.';
+    else if (b.rows.length > limit) text = limit + ' premières lignes sur ' + b.rows.length + ' affichées. L’export contient tout le tableau (taille de l’aperçu dans les réglages).';
+    else text = '';
+    note.textContent = text;
+    note.hidden = !text;
   }
 
   function selectCell(td) {
     const prev = $('#sheet td.sel');
     if (prev) prev.classList.remove('sel');
     td.classList.add('sel');
-    const ref = colLetter(Number(td.dataset.c)) + (Number(td.dataset.r) + 1);
-    $('#fbRef').textContent = ref;
+    $('#fbRef').textContent = colLetter(Number(td.dataset.c)) + (Number(td.dataset.r) + 1);
     const fv = $('#fbVal');
     const alt = td.dataset.alt;
     fv.textContent = (td.textContent || '(vide)') + (alt ? '   ·   autre valeur : ' + alt : '');
     fv.classList.add('has');
   }
 
+  function moveSel(dr, dc) {
+    let td = $('#sheet td.sel');
+    if (!td) {
+      td = $('#sheet tbody td[data-r]');
+      if (td) selectCell(td);
+      return;
+    }
+    let tr = td.parentElement;
+    let idx = td.cellIndex;
+    if (dr) {
+      tr = dr > 0 ? tr.nextElementSibling : tr.previousElementSibling;
+      if (!tr) return;
+    } else idx = clamp(idx + dc, 1, tr.cells.length - 1);
+    const next = tr.cells[idx];
+    if (next && next.dataset.r !== undefined) {
+      selectCell(next);
+      next.scrollIntoView({ block: 'nearest', inline: 'nearest' });
+    }
+  }
+
   function gotoCell(r, c) {
     setTab('table');
+    if (isMobile()) setView('main');
     state.query = '';
     $('#searchInput').value = '';
     state.extraRows = Math.max(state.extraRows, r + 1);
-    renderTable(false);
+    renderTable();
     const td = $('#sheet td[data-r="' + r + '"][data-c="' + c + '"]');
     if (td) {
       selectCell(td);
-      td.scrollIntoView({ block: 'center', inline: 'center', behavior: reduceMotion() ? 'auto' : 'smooth' });
+      td.scrollIntoView({ block: 'center', inline: 'center' });
     } else toast('Cette ligne est au-delà de l’aperçu (' + MAX_DOM_ROWS + ' lignes maximum).');
   }
 
   /* ---------- Onglet Colonnes ---------- */
-  const REASON_TXT = { contenu: 'reconnue d’après son contenu', proche: 'rapprochée (intitulé proche)', 'déduit': 'déduite du nom complet' };
+  const REASON_TXT = { contenu: 'reconnue par son contenu', proche: 'intitulé proche', 'déduit': 'déduite du nom complet' };
 
   function renderColumns() {
     const a = state.analysis;
@@ -775,13 +766,13 @@
         const chips = m.variants
           .map((v, vi) => {
             const k = m.variantKeys[vi];
-            const cut = m.variants.length > 1 && k ? '<button type="button" data-act="detach" data-vk="' + esc(k) + '" title="Séparer « ' + esc(v) + ' » de cette colonne" aria-label="Séparer ' + esc(v) + '">✂</button>' : '';
+            const cut = m.variants.length > 1 && k ? '<button type="button" data-act="detach" data-vk="' + esc(k) + '" title="Séparer « ' + esc(v) + ' » de cette colonne" aria-label="Séparer ' + esc(v) + '">Séparer</button>' : '';
             return '<span class="chip' + (cut ? '' : ' solo') + '">' + esc(v) + cut + '</span>';
           })
           .join('');
         const badges = m.reasons.filter((r) => REASON_TXT[r]).map((r) => '<span class="badge">' + esc(REASON_TXT[r]) + '</span>').join('');
         const others = state.cols.filter((x) => x.id !== c.id && !x.into);
-        const select = '<div class="into"><label for="into-' + c.id + '">Rattacher à</label><select id="into-' + c.id + '" data-act="into"><option value="">— (colonne séparée)</option>' +
+        const select = '<div class="into"><label for="into-' + c.id + '">Rattacher à</label><select id="into-' + c.id + '" data-act="into"><option value="">Aucune (colonne séparée)</option>' +
           others.map((x) => '<option value="' + x.id + '"' + (c.into === x.id ? ' selected' : '') + '>' + esc(x.label) + '</option>').join('') + '</select></div>';
         return (
           '<li class="col-row' + (c.include ? '' : ' is-off') + '" data-id="' + c.id + '">' +
@@ -792,7 +783,7 @@
           '<button type="button" class="icon-btn" data-act="down" aria-label="Descendre" ' + (i === state.cols.length - 1 ? 'disabled' : '') + '><svg class="ic"><use href="#i-down"/></svg></button>' +
           '</div>' +
           '<div class="col-info"><div class="chips">' + chips + badges + '</div>' +
-          '<span>Présente dans ' + m.fileCount + ' fichier' + (m.fileCount > 1 ? 's' : '') + ' sur ' + total + '</span>' + select + '</div>' +
+          '<span>Présente dans ' + m.fileCount + ' source' + (m.fileCount > 1 ? 's' : '') + ' sur ' + total + '</span>' + select + '</div>' +
           '</li>'
         );
       })
@@ -811,8 +802,9 @@
   function renderCheck() {
     const q = state.quality;
     const a = state.analysis;
+    const b = state.built;
     const panel = $('#panelCheck');
-    if (!q || !a) { panel.innerHTML = ''; return; }
+    if (!q || !a || !b) { panel.innerHTML = ''; return; }
 
     const bars = q.comp
       .map((c) => {
@@ -823,76 +815,90 @@
 
     const shown = q.issues.slice(0, 200);
     const issues = q.issues.length
-      ? '<ul class="issues">' +
-        shown.map((it) => {
-          const col = state.built.headers[it.c] || '';
-          return '<li><button type="button" class="issue" data-goto="' + it.r + ':' + it.c + '"><svg class="ic"><use href="#i-alert"/></svg><span><b>' + esc(it.t) + '</b><small>' + esc(col) + ' · ligne ' + (it.r + 1) + ' · ' + esc(String(it.v)) + '</small></span></button></li>';
-        }).join('') + '</ul>' + (q.issues.length > shown.length ? '<p class="sheet-note">' + (q.issues.length - shown.length) + ' autres anomalies non listées.</p>' : '')
-      : '<p class="ok-box"><svg class="ic"><use href="#i-check"/></svg>Aucune anomalie détectée.</p>';
+      ? '<ul class="list">' + shown.map((it) => '<li><button type="button" class="list-btn" data-goto="' + it.r + ':' + it.c + '"><svg class="ic"><use href="#i-alert"/></svg><span><b>' + esc(it.t) + '</b><small>' + esc(b.headers[it.c] || '') + ' · ligne ' + (it.r + 1) + ' · ' + esc(String(it.v)) + '</small></span></button></li>').join('') + '</ul>' +
+        (q.issues.length > shown.length ? '<p class="muted-note">' + (q.issues.length - shown.length) + ' autres anomalies non listées.</p>' : '')
+      : '<p class="ok-line"><svg class="ic"><use href="#i-check"/></svg>Aucune anomalie détectée.</p>';
+
+    const merges = b.merges.length
+      ? '<ul class="list">' + b.merges.slice(0, 300).map((m) => '<li class="list-row"><div><b>' + esc(m.label) + '</b><small>' + esc(m.sources.join(' · ')) + ' — reconnue par ' + esc(m.by.join(', ') || 'ligne identique') + '</small></div><button type="button" class="btn btn-sm" data-split="' + m.idx.slice(1).join(',') + '">Dissocier</button></li>').join('') + '</ul>'
+      : '<p class="muted-note">Aucune personne regroupée.</p>';
+    const manual = state.noMerge.size ? '<p class="muted-note">' + plural(state.noMerge.size, 'ligne dissociée à la main', 'lignes dissociées à la main') + '. <button type="button" class="btn btn-sm" data-act="resetsplit">Rétablir</button></p>' : '';
 
     const rows = a.report
       .map((r) => {
         const used = r.sheets.filter((s) => !s.empty);
-        const detail = r.error ? '<span class="tag err">erreur</span>' : used.map((s) => esc(s.name) + (s.headerless ? ' <span class="tag">sans en-têtes</span>' : ' <span class="tag">ligne ' + s.headerRow + '</span>')).join(', ') || '—';
+        const detail = r.error ? '<span class="tag-s err">erreur</span>' : used.map((s) => esc(s.name) + ' ' + (s.form ? '<span class="tag-s">fiche</span>' : s.headerless ? '<span class="tag-s">sans en-têtes</span>' : '<span class="tag-s">ligne ' + s.headerRow + '</span>')).join(', ') || '—';
         return '<tr><td>' + esc(r.name) + '</td><td>' + detail + '</td><td>' + r.rows + '</td></tr>';
       })
       .join('');
 
     panel.innerHTML =
       '<div class="check-grid">' +
-      '<div class="card"><h3>Remplissage des colonnes</h3><div class="bars">' + (bars || '<p class="sheet-note">Aucune colonne.</p>') + '</div></div>' +
-      '<div class="card"><h3>Anomalies (' + q.issues.length + ')</h3>' + issues + '</div>' +
-      '<div class="card check-wide"><h3>Fichiers lus</h3><table class="report-table"><thead><tr><th>Fichier</th><th>Feuilles et ligne d’en-têtes</th><th>Lignes</th></tr></thead><tbody>' + rows + '</tbody></table></div>' +
+      '<section class="card"><h3>Anomalies (' + q.issues.length + ')</h3>' + issues + '</section>' +
+      '<section class="card"><h3>Personnes regroupées (' + b.merges.length + ')</h3>' + merges + manual + '</section>' +
+      '<section class="card"><h3>Remplissage des colonnes</h3><div class="card-body"><div class="bars">' + (bars || '<p class="muted-note">Aucune colonne.</p>') + '</div></div></section>' +
+      '<section class="card check-wide"><h3>Sources lues</h3><table class="report"><thead><tr><th>Source</th><th>Feuilles et ligne d’en-têtes</th><th>Lignes</th></tr></thead><tbody>' + rows + '</tbody></table></section>' +
       '</div>';
   }
 
   /* ---------- Onglets ---------- */
   function setTab(tab, silent) {
     state.tab = tab;
+    document.body.dataset.tab = tab;
     $$('.tab').forEach((t) => {
       const on = t.dataset.tab === tab;
       t.setAttribute('aria-selected', on ? 'true' : 'false');
       t.tabIndex = on ? 0 : -1;
     });
-    $('#panelTable').hidden = tab !== 'table';
-    $('#panelCols').hidden = tab !== 'cols';
-    $('#panelCheck').hidden = tab !== 'check';
+    const has = !!(state.analysis && state.built);
+    $('#panelTable').hidden = !has || tab !== 'table';
+    $('#panelCols').hidden = !has || tab !== 'cols';
+    $('#panelCheck').hidden = !has || tab !== 'check';
     $('#toolbar .search').style.visibility = tab === 'table' ? '' : 'hidden';
-    if (!silent) {
+    if (!silent && has) {
       if (tab === 'cols') renderColumns();
       if (tab === 'check') renderCheck();
     }
+    renderLayout();
   }
 
-  /* ---------- Actions / export ---------- */
+  /* ================================================================== */
+  /*  Actions et export                                                  */
+  /* ================================================================== */
+
   const FORMATS = {
-    xlsx: { label: 'xlsx', ext: 'xlsx', name: 'Excel', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
-    xls: { label: 'xls', ext: 'xls', name: 'Excel 97-2003', mime: 'application/vnd.ms-excel' },
-    ods: { label: 'ods', ext: 'ods', name: 'LibreOffice', mime: 'application/vnd.oasis.opendocument.spreadsheet' },
-    csv: { label: 'csv ;', ext: 'csv', name: 'CSV (;)', mime: 'text/csv;charset=utf-8' },
-    csvc: { label: 'csv ,', ext: 'csv', name: 'CSV (,)', mime: 'text/csv;charset=utf-8' },
-    tsv: { label: 'tsv', ext: 'tsv', name: 'TSV', mime: 'text/tab-separated-values;charset=utf-8' },
-    json: { label: 'json', ext: 'json', name: 'JSON', mime: 'application/json' },
+    xlsx: { ext: 'xlsx', name: 'Excel', mime: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' },
+    xls: { ext: 'xls', name: 'Excel 97-2003', mime: 'application/vnd.ms-excel' },
+    ods: { ext: 'ods', name: 'LibreOffice Calc', mime: 'application/vnd.oasis.opendocument.spreadsheet' },
+    csv: { ext: 'csv', name: 'CSV, séparateur « ; »', mime: 'text/csv;charset=utf-8' },
+    csvc: { ext: 'csv', name: 'CSV, séparateur « , »', mime: 'text/csv;charset=utf-8' },
+    tsv: { ext: 'tsv', name: 'TSV (tabulation)', mime: 'text/tab-separated-values;charset=utf-8' },
+    json: { ext: 'json', name: 'JSON', mime: 'application/json' },
   };
-
-  function renderActions() {
-    const sel = $('#formatSel');
-    sel.innerHTML = Object.keys(FORMATS).map((k) => '<option value="' + k + '">' + esc(FORMATS[k].name) + '</option>').join('');
-    if (!FORMATS[S.format]) S.format = 'xlsx';
-    sel.value = S.format;
-    $('#dlLabel').textContent = 'Télécharger (.' + FORMATS[S.format].ext + ')';
-    $('#shareBtn').hidden = !canShareFiles();
-  }
-
-  function updateActions() {
-    const ok = !!(state.built && state.built.rows.length);
-    ['#dlBtn', '#copyBtn', '#shareBtn', '#formatSel'].forEach((s) => { const el = $(s); if (el) el.disabled = !ok; });
-  }
 
   function canShareFiles() {
     try {
       return !!(navigator.canShare && navigator.share && navigator.canShare({ files: [new File(['x'], 'a.xlsx', { type: FORMATS.xlsx.mime })] }));
     } catch (e) { return false; }
+  }
+
+  function renderActions() {
+    if (!FORMATS[S.format]) S.format = 'xlsx';
+    $('#dlLabel').textContent = 'Exporter';
+    $('#dlBtn').title = 'Exporter en .' + FORMATS[S.format].ext + ' (Ctrl + S)';
+    $('#fmtMenu').innerHTML =
+      '<div class="menu-label">Exporter en</div>' +
+      Object.keys(FORMATS).map((k) => '<button type="button" role="menuitemradio" class="menu-item" data-fmt="' + k + '" aria-checked="' + (k === S.format) + '"><span>' + esc(FORMATS[k].name) + ' <span style="color:var(--faint)">.' + FORMATS[k].ext + '</span></span><svg class="ic tick"><use href="#i-check"/></svg></button>').join('') +
+      '<div class="menu-sep"></div>' +
+      '<button type="button" role="menuitem" class="menu-item" data-act="copy"><svg class="ic"><use href="#i-copy"/></svg>Copier le tableau</button>' +
+      (canShareFiles() ? '<button type="button" role="menuitem" class="menu-item" data-act="share"><svg class="ic"><use href="#i-share"/></svg>Partager le fichier…</button>' : '');
+    updateActions();
+  }
+
+  function updateActions() {
+    const ok = !!(state.built && state.built.rows.length);
+    $('#dlBtn').disabled = !ok;
+    $('#fmtBtn').disabled = !ok;
   }
 
   function stamp(kind) {
@@ -903,7 +909,7 @@
 
   function baseFileName() {
     const b = state.built;
-    let name = String(S.fileName || '')
+    const name = String(S.fileName || '')
       .replace(/\{date\}/g, stamp())
       .replace(/\{heure\}/g, stamp('time'))
       .replace(/\{n\}/g, b ? b.rows.length : 0)
@@ -946,32 +952,17 @@
     setTimeout(() => URL.revokeObjectURL(url), 4000);
   }
 
-  /* ---- Construction des fichiers ---- */
-  function rowsForExport(b, forText) {
-    return b.rows.map((r) =>
-      r.map((v) => {
-        if (v === null || v === undefined || v === '') return S.emptyText || null;
-        if (forText && v instanceof Date) return fmtDate(v, S.dateFormat);
-        return v;
-      })
-    );
+  function rowsForExport(b) {
+    return b.rows.map((r) => r.map((v) => (v === null || v === undefined || v === '' ? S.emptyText || null : v)));
   }
 
-  function toLocalDate(d) {
-    return new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes());
-  }
-
-  function accentArgb() {
-    return { blue: 'FF3355FF', indigo: 'FF5B3DF5', green: 'FF0A8F5B', orange: 'FFE8590C', rose: 'FFD6336C', slate: 'FF334155' }[S.accent] || 'FF3355FF';
-  }
+  const toLocalDate = (d) => new Date(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate(), d.getUTCHours(), d.getUTCMinutes());
 
   function reportRows() {
-    const a = state.analysis;
-    const b = state.built;
-    const rows = [['Fichier', 'Feuilles lues', 'Lignes']];
-    a.report.forEach((r) => rows.push([r.name, r.error ? 'Erreur' : r.sheets.filter((s) => !s.empty).length, r.rows]));
+    const rows = [['Source', 'Feuilles lues', 'Lignes']];
+    state.analysis.report.forEach((r) => rows.push([r.name, r.error ? 'Erreur' : r.sheets.filter((s) => !s.empty).length, r.rows]));
     rows.push([]);
-    rows.push(['Total', '', b.rows.length]);
+    rows.push(['Total', '', state.built.rows.length]);
     return rows;
   }
 
@@ -981,22 +972,22 @@
     wb.creator = 'MayaExcel';
     wb.created = new Date();
     const ws = wb.addWorksheet('Fusion', { views: S.freeze ? [{ state: 'frozen', ySplit: 1 }] : [] });
-    const data = rowsForExport(b, false);
+    const data = rowsForExport(b);
     ws.addRow(b.headers);
     data.forEach((r) => ws.addRow(r));
 
     const heavy = data.length > 20000;
     const line = { style: 'thin', color: { argb: 'FFDDE1E8' } };
     const head = ws.getRow(1);
-    head.height = 24;
+    head.height = 22;
     const hc = S.headerColor;
     head.eachCell((cell) => {
       cell.alignment = { vertical: 'middle', horizontal: 'left' };
       if (hc === 'none') { cell.font = { bold: true }; return; }
       const dark = hc === 'dark' || hc === 'accent';
-      cell.font = { bold: true, color: { argb: dark ? 'FFFFFFFF' : 'FF0B1220' } };
-      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hc === 'dark' ? 'FF0B1220' : hc === 'accent' ? accentArgb() : 'FFE9ECF2' } };
-      cell.border = { bottom: line };
+      cell.font = { bold: true, color: { argb: dark ? 'FFFFFFFF' : 'FF101828' } };
+      cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: hc === 'dark' ? 'FF101828' : hc === 'accent' ? 'FF1D4ED8' : 'FFEEF1F6' } };
+      cell.border = { bottom: { style: 'thin', color: { argb: 'FFB7BDC9' } } };
     });
 
     b.headers.forEach((h, j) => {
@@ -1005,7 +996,7 @@
       const sample = Math.min(data.length, 2000);
       for (let i = 0; i < sample; i++) {
         const v = data[i][j];
-        if (v instanceof Date) { hasDate = true; width = Math.max(width, 16); }
+        if (v instanceof Date) { hasDate = true; width = Math.max(width, 14); }
         else if (v !== null && v !== undefined) width = Math.max(width, String(v).length);
       }
       ws.getColumn(j + 1).width = clamp(width + 3, 10, 48);
@@ -1026,12 +1017,12 @@
         const cell = row.getCell(j + 1);
         if (!heavy) {
           cell.border = { bottom: line };
-          if (S.zebra && i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF5F6F9' } };
+          if (S.zebra && i % 2 === 1) cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFF7F8FA' } };
         }
         const alt = b.conflictMap[i + ':' + j];
         if (alt) {
-          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4DB' } };
-          cell.note = 'Autre valeur dans un autre fichier : ' + alt;
+          cell.fill = { type: 'pattern', pattern: 'solid', fgColor: { argb: 'FFFFF4D6' } };
+          cell.note = 'Autre valeur dans une autre source : ' + alt;
         }
       }
     }
@@ -1047,13 +1038,19 @@
       const keys = Object.keys(b.conflictMap);
       if (keys.length) {
         ws2.addRow([]);
-        const t = ws2.addRow(['Valeurs différentes selon les fichiers', 'Colonne', 'Valeur gardée', 'Autre valeur']);
+        const t = ws2.addRow(['Valeurs différentes selon les sources', 'Colonne', 'Valeur retenue', 'Autre valeur']);
         t.font = { bold: true };
         ws2.getColumn(4).width = 30;
         keys.forEach((k) => {
           const [r, c] = k.split(':').map(Number);
           ws2.addRow(['Ligne ' + (r + 1), b.headers[c], cellText(b.rows[r][c]), b.conflictMap[k]]);
         });
+      }
+      if (b.merges.length) {
+        ws2.addRow([]);
+        const t = ws2.addRow(['Personnes regroupées', 'Sources', 'Reconnue par']);
+        t.font = { bold: true };
+        b.merges.forEach((m) => ws2.addRow([m.label, m.sources.join(' · '), m.by.join(', ')]));
       }
     }
     const buf = await wb.xlsx.writeBuffer();
@@ -1063,7 +1060,7 @@
   async function makeSheetJs(b, bookType) {
     await loadLib('xlsx');
     const XLSX = window.XLSX;
-    const data = [b.headers].concat(rowsForExport(b, false).map((r) => r.map((v) => (v instanceof Date ? toLocalDate(v) : v))));
+    const data = [b.headers].concat(rowsForExport(b).map((r) => r.map((v) => (v instanceof Date ? toLocalDate(v) : v))));
     const ws = XLSX.utils.aoa_to_sheet(data, { cellDates: true });
     ws['!cols'] = b.headers.map((h, j) => ({ wch: clamp(Math.max(String(h).length, ...data.slice(1, 300).map((r) => (r[j] == null ? 0 : String(r[j]).length))) + 2, 8, 48) }));
     const wb = XLSX.utils.book_new();
@@ -1089,17 +1086,16 @@
       while (keys.includes(k)) k = h + ' (' + n++ + ')';
       keys.push(k);
     });
-    const out = b.rows.map((r) => {
+    return JSON.stringify(b.rows.map((r) => {
       const o = {};
       r.forEach((v, j) => { o[keys[j]] = v instanceof Date ? v.toISOString().slice(0, v.getUTCHours() || v.getUTCMinutes() ? 16 : 10) : v === undefined ? null : v; });
       return o;
-    });
-    return JSON.stringify(out, null, 2);
+    }), null, 2);
   }
 
-  async function makeExport() {
+  async function makeExport(fmtKey) {
     const b = state.built;
-    const fmt = FORMATS[S.format] ? S.format : 'xlsx';
+    const fmt = FORMATS[fmtKey] ? fmtKey : 'xlsx';
     const name = baseFileName() + '.' + FORMATS[fmt].ext;
     let blob;
     if (fmt === 'xlsx') {
@@ -1113,27 +1109,7 @@
     return { blob, name };
   }
 
-  function burst(anchor) {
-    if (reduceMotion() || !anchor) return;
-    const r = anchor.getBoundingClientRect();
-    const colors = ['#3355ff', '#ffb020', '#0b1220', '#7c93ff'];
-    for (let i = 0; i < 22; i++) {
-      const el = document.createElement('i');
-      el.className = 'confetti';
-      const ang = Math.random() * Math.PI - Math.PI;
-      const dist = 60 + Math.random() * 120;
-      el.style.left = r.left + r.width / 2 + 'px';
-      el.style.top = r.top + r.height / 2 + 'px';
-      el.style.background = colors[i % colors.length];
-      el.style.setProperty('--dx', Math.cos(ang) * dist + 'px');
-      el.style.setProperty('--dy', Math.sin(ang) * dist - 20 + 'px');
-      el.style.setProperty('--rot', Math.random() * 360 + 'deg');
-      document.body.appendChild(el);
-      setTimeout(() => el.remove(), 1000);
-    }
-  }
-
-  async function doDownload() {
+  async function doDownload(fmt) {
     if (!state.built || !state.built.rows.length) return;
     const btn = $('#dlBtn');
     const label = $('#dlLabel');
@@ -1141,10 +1117,9 @@
     btn.disabled = true;
     label.textContent = 'Préparation…';
     try {
-      const { blob, name } = await makeExport();
+      const { blob, name } = await makeExport(fmt || S.format);
       await download(blob, name);
-      toast('Fichier prêt : ' + name);
-      burst(btn);
+      toast('Fichier exporté : ' + name);
     } catch (e) {
       console.error(e);
       toast('Impossible de créer le fichier. Vérifiez votre connexion Internet et réessayez.', true);
@@ -1163,8 +1138,7 @@
     } catch (e) {
       const ta = document.createElement('textarea');
       ta.value = text;
-      ta.style.position = 'fixed';
-      ta.style.opacity = '0';
+      ta.style.cssText = 'position:fixed;opacity:0';
       document.body.appendChild(ta);
       ta.select();
       try { document.execCommand('copy'); } catch (e2) { /* ignoré */ }
@@ -1175,16 +1149,49 @@
 
   async function doShare() {
     try {
-      const { blob, name } = await makeExport();
-      const file = new File([blob], name, { type: blob.type });
-      await navigator.share({ files: [file], title: name });
+      const { blob, name } = await makeExport(S.format);
+      await navigator.share({ files: [new File([blob], name, { type: blob.type })], title: name });
     } catch (e) {
       if (e && e.name !== 'AbortError') toast('Le partage n’est pas disponible ici.', true);
     }
   }
 
+  /* ---------- Menu d'export ---------- */
+  const fmtMenu = $('#fmtMenu');
+  const fmtBtn = $('#fmtBtn');
+  function toggleMenu(open) {
+    const show = open === undefined ? fmtMenu.hidden : open;
+    fmtMenu.hidden = !show;
+    fmtBtn.setAttribute('aria-expanded', show ? 'true' : 'false');
+    if (show) {
+      const sel = fmtMenu.querySelector('[aria-checked="true"]') || fmtMenu.querySelector('.menu-item');
+      if (sel) sel.focus();
+    }
+  }
+  fmtBtn.addEventListener('click', (e) => { e.stopPropagation(); toggleMenu(); });
+  fmtMenu.addEventListener('click', (e) => {
+    const it = e.target.closest('.menu-item');
+    if (!it) return;
+    toggleMenu(false);
+    if (it.dataset.fmt) {
+      S.format = it.dataset.fmt;
+      saveSettings();
+      renderActions();
+      doDownload(S.format);
+    } else if (it.dataset.act === 'copy') doCopy();
+    else if (it.dataset.act === 'share') doShare();
+  });
+  fmtMenu.addEventListener('keydown', (e) => {
+    const items = $$('.menu-item', fmtMenu);
+    const i = items.indexOf(document.activeElement);
+    if (e.key === 'ArrowDown') { e.preventDefault(); items[(i + 1) % items.length].focus(); }
+    else if (e.key === 'ArrowUp') { e.preventDefault(); items[(i + items.length - 1) % items.length].focus(); }
+    else if (e.key === 'Escape') { toggleMenu(false); fmtBtn.focus(); }
+  });
+  document.addEventListener('click', (e) => { if (!fmtMenu.hidden && !e.target.closest('#exportSplit')) toggleMenu(false); });
+
   /* ================================================================== */
-  /*  Panneau de réglages                                                */
+  /*  Réglages                                                           */
   /* ================================================================== */
 
   const SECTION_ORDER = ['fusion', 'data', 'table', 'export', 'look', 'app'];
@@ -1201,59 +1208,68 @@
   function schema() {
     return {
       fusion: { title: 'Fusion', items: [
-        { t: 'group', l: 'Lecture des fichiers' },
-        { k: 'allSheets', t: 'switch', l: 'Lire toutes les feuilles de chaque fichier', h: 'Sinon, seule la première feuille est lue.', a: 'analyze' },
-        { k: 'headerMode', t: 'select', l: 'Ligne des titres de colonnes', a: 'analyze', o: [{ v: 'auto', l: 'Détection automatique' }, { v: 'fixed', l: 'Numéro de ligne précis' }, { v: 'none', l: 'Aucune (fichiers sans titres)' }] },
+        { t: 'group', l: 'Lecture des sources' },
+        { k: 'allSheets', t: 'switch', l: 'Lire toutes les feuilles', h: 'Sinon, seule la première feuille de chaque fichier est lue.', a: 'analyze' },
+        { k: 'formDetect', t: 'switch', l: 'Lire les fiches individuelles', h: 'Feuilles de la forme « Nom : … », « Téléphone : … » : une fiche devient une ligne.', a: 'analyze' },
+        { k: 'multiHeader', t: 'switch', l: 'Titres répartis sur deux lignes', h: 'Une ligne de regroupement (Père, Mère…) lève les doublons de titres.', a: 'analyze' },
+        { k: 'nullTokens', t: 'switch', l: 'Ignorer les valeurs « N/A », « néant », « - »', a: 'analyze' },
+        { k: 'headerMode', t: 'select', l: 'Ligne des titres', a: 'analyze', o: [{ v: 'auto', l: 'Détection automatique' }, { v: 'fixed', l: 'Numéro de ligne précis' }, { v: 'none', l: 'Aucune (sans titres)' }] },
         { k: 'headerRow', t: 'number', l: 'Numéro de la ligne des titres', min: 1, max: 200, a: 'analyze', when: () => S.headerMode === 'fixed' },
         { t: 'group', l: 'Rapprochement des colonnes' },
-        { k: 'sensitivity', t: 'seg', l: 'Sensibilité', h: 'Strict : seulement les noms quasi identiques. Large : rapproche aussi les noms plus éloignés.', a: 'analyze', o: [{ v: 'strict', l: 'Strict' }, { v: 'balanced', l: 'Équilibré' }, { v: 'large', l: 'Large' }] },
-        { k: 'contentMatch', t: 'switch', l: 'Reconnaître les colonnes d’après leur contenu', h: 'E-mails, téléphones, sexe, listes de valeurs identiques…', a: 'analyze' },
-        { k: 'splitNames', t: 'switch', l: 'Séparer « Nom et Prénoms » en deux colonnes', h: 'Quand d’autres fichiers ont Nom et Prénom séparés.', a: 'analyze' },
-        { t: 'group', l: 'Lignes' },
-        { k: 'combine', t: 'switch', l: 'Regrouper les lignes de la même personne', h: 'Reconnue par matricule, e-mail, téléphone ou nom. Retire aussi les doublons exacts.', a: 'build' },
+        { k: 'sensitivity', t: 'seg', l: 'Sensibilité', h: 'Strict : noms quasi identiques. Large : accepte des intitulés plus éloignés.', a: 'analyze', o: [{ v: 'strict', l: 'Strict' }, { v: 'balanced', l: 'Équilibré' }, { v: 'large', l: 'Large' }], stack: true },
+        { k: 'contentMatch', t: 'switch', l: 'Reconnaître les colonnes par leur contenu', h: 'E-mails, téléphones, sexe, listes de valeurs communes.', a: 'analyze' },
+        { k: 'splitNames', t: 'switch', l: 'Séparer « Nom et Prénoms »', h: 'Quand d’autres sources ont Nom et Prénom dans des colonnes distinctes.', a: 'analyze' },
+        { t: 'group', l: 'Reconnaissance des personnes' },
+        { k: 'combine', t: 'switch', l: 'Regrouper les lignes d’une même personne', h: 'Retire aussi les lignes strictement identiques.', a: 'build' },
+        { k: 'personMatch', t: 'seg', l: 'Rigueur du regroupement', h: 'Strict : matricule, e-mail ou téléphone. Normal : ajoute le nom. Large : tolère aussi les fautes de frappe.', a: 'build', o: [{ v: 'strict', l: 'Strict' }, { v: 'normal', l: 'Normal' }, { v: 'large', l: 'Large' }], stack: true, when: () => S.combine },
+        { k: 'fuzzyNames', t: 'switch', l: 'Tolérer les fautes dans les noms', h: 'Agbodjan / Agbodjang, accents oubliés.', a: 'build', when: () => S.combine },
+        { k: 'useBirth', t: 'switch', l: 'Départager les homonymes par la date de naissance', a: 'build', when: () => S.combine },
         { k: 'keyCol', t: 'select', l: 'Reconnaître une ligne d’après', a: 'build', when: () => S.combine, o: () => [{ v: 'auto', l: 'Automatique (personne)' }].concat(state.cols.filter((c) => c.include && !c.into).map((c) => ({ v: c.key, l: 'Colonne « ' + c.label + ' »' }))) },
-        { k: 'conflict', t: 'select', l: 'En cas de valeurs différentes', a: 'build', when: () => S.combine, o: [{ v: 'first', l: 'Garder la première (ordre des fichiers)' }, { v: 'last', l: 'Garder la dernière' }, { v: 'longest', l: 'Garder la plus complète' }] },
+        { k: 'conflict', t: 'select', l: 'Valeurs différentes', a: 'build', when: () => S.combine, o: [{ v: 'first', l: 'Garder la première source' }, { v: 'last', l: 'Garder la dernière' }, { v: 'longest', l: 'Garder la plus complète' }, { v: 'majority', l: 'Garder la plus fréquente' }] },
+        { t: 'group', l: 'Règles personnalisées' },
+        { k: 'ignoreColumns', t: 'textarea', l: 'Colonnes à ignorer', h: 'Intitulés séparés par des virgules. Exemple : Signature, Observations', a: 'analyze' },
+        { k: 'synonyms', t: 'textarea', l: 'Équivalences d’intitulés', h: 'Une règle par ligne : intitulé = colonne. Exemple : Contact perso = Téléphone', a: 'analyze' },
       ] },
       data: { title: 'Données', items: [
         { k: 'clean', t: 'switch', l: 'Harmoniser les données', h: 'Applique les règles ci-dessous.', a: 'build' },
         { k: 'nomCase', t: 'select', l: 'Noms de famille', a: 'build', when: () => S.clean, o: [{ v: 'upper', l: 'MAJUSCULES' }, { v: 'title', l: 'Première Lettre Majuscule' }, { v: 'keep', l: 'Ne pas modifier' }] },
         { k: 'prenomCase', t: 'select', l: 'Prénoms', a: 'build', when: () => S.clean, o: [{ v: 'title', l: 'Première Lettre Majuscule' }, { v: 'upper', l: 'MAJUSCULES' }, { v: 'keep', l: 'Ne pas modifier' }] },
         { k: 'emailLower', t: 'switch', l: 'E-mails en minuscules', a: 'build', when: () => S.clean },
-        { k: 'sexNorm', t: 'switch', l: 'Sexe : M, H, Homme → Masculin ; F, Femme → Féminin', a: 'build', when: () => S.clean },
-        { k: 'placeCase', t: 'switch', l: 'Villes et pays avec majuscule', a: 'build', when: () => S.clean },
-        { k: 'phoneFormat', t: 'select', l: 'Numéros de téléphone', a: 'build', when: () => S.clean, o: [{ v: 'keep', l: 'Ne pas modifier' }, { v: 'digits', l: 'Chiffres seulement' }, { v: 'spaced', l: 'Par groupes de 2 chiffres' }, { v: 'intl', l: 'Avec indicatif du pays' }] },
-        { k: 'phoneCC', t: 'text', l: 'Indicatif du pays', h: 'Par exemple 228 pour le Togo.', a: 'build', when: () => S.clean && (S.phoneFormat === 'intl' || S.phoneFormat === 'spaced') },
+        { k: 'sexNorm', t: 'switch', l: 'Sexe : Masculin / Féminin', h: 'M, H, Homme → Masculin ; F, Femme → Féminin.', a: 'build', when: () => S.clean },
+        { k: 'normCats', t: 'switch', l: 'Situation matrimoniale et Oui / Non', h: 'Uniformise « célibataire », « Marié(e) », « oui », « yes »…', a: 'build', when: () => S.clean },
+        { k: 'placeCase', t: 'switch', l: 'Majuscule aux villes et pays', a: 'build', when: () => S.clean },
+        { k: 'unifyLabels', t: 'switch', l: 'Unifier les libellés proches', h: 'Poste, service, ville… : « Informaticien » / « Informaticienne », fautes de frappe.', a: 'build', when: () => S.clean },
+        { k: 'phoneFormat', t: 'select', l: 'Numéros de téléphone', a: 'build', when: () => S.clean, o: [{ v: 'keep', l: 'Ne pas modifier' }, { v: 'digits', l: 'Chiffres seulement' }, { v: 'spaced', l: 'Groupes de 2 chiffres' }, { v: 'intl', l: 'Avec indicatif du pays' }] },
+        { k: 'phoneCC', t: 'text', l: 'Indicatif du pays', h: 'Exemple : 228 pour le Togo.', a: 'build', when: () => S.clean && (S.phoneFormat === 'intl' || S.phoneFormat === 'spaced') },
         { t: 'group', l: 'Affichage des valeurs' },
         { k: 'dateFormat', t: 'select', l: 'Format des dates', a: 'view', o: [{ v: 'dmy', l: '31/12/2025' }, { v: 'ymd', l: '2025-12-31' }, { v: 'mdy', l: '12/31/2025' }, { v: 'long', l: '31 décembre 2025' }] },
         { k: 'emptyText', t: 'select', l: 'Cases vides', a: 'view', o: [{ v: '', l: 'Laisser vide' }, { v: '—', l: 'Tiret (—)' }, { v: 'N/A', l: 'N/A' }, { v: '-', l: '-' }] },
-        { k: 'dropEmptyCols', t: 'switch', l: 'Masquer les colonnes entièrement vides', a: 'build' },
+        { k: 'dropEmptyCols', t: 'switch', l: 'Masquer les colonnes vides', a: 'build' },
       ] },
       table: { title: 'Tableau', items: [
-        { k: 'numbering', t: 'switch', l: 'Numéroter les lignes (colonne N°)', a: 'build' },
-        { k: 'source', t: 'switch', l: 'Ajouter une colonne « Fichier source »', a: 'build' },
+        { k: 'numbering', t: 'switch', l: 'Colonne N° (numérotation)', a: 'build' },
+        { k: 'source', t: 'switch', l: 'Colonne « Fichier source »', a: 'build' },
         { t: 'group', l: 'Tri' },
-        { k: 'sortBy', t: 'select', l: 'Trier par', a: 'build', o: () => colOptions(true, 'Ordre des fichiers') },
+        { k: 'sortBy', t: 'select', l: 'Trier par', a: 'build', o: () => colOptions(true, 'Ordre des sources') },
         { k: 'sortDir', t: 'seg', l: 'Sens', a: 'build', o: [{ v: 'asc', l: 'A → Z' }, { v: 'desc', l: 'Z → A' }], when: () => S.sortBy !== 'auto' && S.sortBy !== 'none' },
         { k: 'sortBy2', t: 'select', l: 'Puis par', a: 'build', when: () => S.sortBy !== 'auto' && S.sortBy !== 'none', o: () => colOptions(false) },
         { k: 'sortDir2', t: 'seg', l: 'Sens (2e tri)', a: 'build', o: [{ v: 'asc', l: 'A → Z' }, { v: 'desc', l: 'Z → A' }], when: () => S.sortBy !== 'auto' && S.sortBy !== 'none' && S.sortBy2 !== 'none' },
         { t: 'group', l: 'Aperçu' },
-        { k: 'previewRows', t: 'select', l: 'Lignes affichées dans l’aperçu', a: 'view', num: true, o: [{ v: 50, l: '50' }, { v: 100, l: '100' }, { v: 500, l: '500' }, { v: 1000, l: '1 000' }, { v: 5000, l: '5 000' }] },
+        { k: 'previewRows', t: 'select', l: 'Lignes affichées', a: 'view', num: true, o: [{ v: 100, l: '100' }, { v: 500, l: '500' }, { v: 1000, l: '1 000' }, { v: 5000, l: '5 000' }] },
       ] },
       export: { title: 'Export', items: [
-        { k: 'format', t: 'select', l: 'Format du fichier', a: 'export', o: Object.keys(FORMATS).map((k) => ({ v: k, l: FORMATS[k].name + ' (.' + FORMATS[k].ext + ')' })) },
+        { k: 'format', t: 'select', l: 'Format par défaut', a: 'export', o: Object.keys(FORMATS).map((k) => ({ v: k, l: FORMATS[k].name + ' (.' + FORMATS[k].ext + ')' })) },
         { k: 'fileName', t: 'text', l: 'Nom du fichier', h: 'Variables : {date}, {heure}, {n} (lignes), {fichiers}.', a: 'export' },
         { t: 'group', l: 'Fichier Excel' },
-        { k: 'headerColor', t: 'select', l: 'Ligne de titres', a: 'export', o: [{ v: 'dark', l: 'Fond foncé' }, { v: 'accent', l: 'Couleur d’accentuation' }, { v: 'light', l: 'Fond clair' }, { v: 'none', l: 'Sans couleur' }] },
-        { k: 'zebra', t: 'switch', l: 'Lignes alternées (zébrage)', a: 'export' },
+        { k: 'headerColor', t: 'select', l: 'Ligne de titres', a: 'export', o: [{ v: 'light', l: 'Fond clair' }, { v: 'dark', l: 'Fond foncé' }, { v: 'accent', l: 'Fond bleu' }, { v: 'none', l: 'Sans couleur' }] },
+        { k: 'zebra', t: 'switch', l: 'Lignes alternées', a: 'export' },
         { k: 'freeze', t: 'switch', l: 'Figer la ligne de titres', a: 'export' },
         { k: 'autofilter', t: 'switch', l: 'Ajouter les filtres', a: 'export' },
-        { k: 'reportSheet', t: 'switch', l: 'Ajouter une feuille « Rapport »', h: 'Liste des fichiers lus et des valeurs différentes.', a: 'export' },
+        { k: 'reportSheet', t: 'switch', l: 'Ajouter une feuille « Rapport »', h: 'Sources lues, valeurs différentes, personnes regroupées.', a: 'export' },
         { t: 'group', l: 'Fichiers texte' },
-        { k: 'csvSafe', t: 'switch', l: 'Protéger contre les formules', h: 'Évite qu’une cellule commençant par = + - @ soit exécutée par Excel.', a: 'export' },
+        { k: 'csvSafe', t: 'switch', l: 'Protéger contre les formules', h: 'Évite qu’une cellule commençant par = + - @ soit exécutée.', a: 'export' },
       ] },
       look: { title: 'Affichage', items: [
-        { k: 'theme', t: 'seg', l: 'Thème', a: 'ui', o: [{ v: 'light', l: 'Clair' }, { v: 'dark', l: 'Sombre' }, { v: 'system', l: 'Système' }] },
-        { k: 'accent', t: 'accent', l: 'Couleur d’accentuation', a: 'ui' },
         { k: 'density', t: 'seg', l: 'Densité du tableau', a: 'ui', o: [{ v: 'comfortable', l: 'Confortable' }, { v: 'compact', l: 'Compacte' }] },
         { k: 'fontScale', t: 'seg', l: 'Taille du texte', a: 'ui', num: true, o: [{ v: 90, l: 'Petit' }, { v: 100, l: 'Normal' }, { v: 115, l: 'Grand' }, { v: 130, l: 'Très grand' }] },
         { k: 'motion', t: 'seg', l: 'Animations', a: 'ui', o: [{ v: 'system', l: 'Système' }, { v: 'on', l: 'Activées' }, { v: 'off', l: 'Réduites' }] },
@@ -1262,9 +1278,6 @@
     };
   }
 
-  const ACCENTS = { blue: '#3355ff', indigo: '#5b3df5', green: '#0a8f5b', orange: '#e8590c', rose: '#d6336c', slate: '#334155' };
-  const ACCENT_NAMES = { blue: 'Bleu', indigo: 'Indigo', green: 'Vert', orange: 'Orange', rose: 'Rose', slate: 'Ardoise' };
-
   function controlHtml(it) {
     if (it.t === 'group') return '<p class="group-title">' + esc(it.l) + '</p>';
     if (it.t === 'html') return it.html();
@@ -1272,29 +1285,19 @@
     const id = 's-' + it.k;
     const hint = it.h ? '<p class="setting-hint">' + esc(it.h) + '</p>' : '';
     const v = S[it.k];
-    if (it.t === 'switch') {
-      return '<div class="setting"><div class="setting-row"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="checkbox" role="switch" class="switch" id="' + id + '" data-k="' + it.k + '" ' + (v ? 'checked' : '') + '></div>' + hint + '</div>';
-    }
+    const cls = 'setting' + (it.stack || it.t === 'textarea' ? ' stack' : '');
+    if (it.t === 'switch') return '<div class="' + cls + '"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="checkbox" role="switch" class="switch" id="' + id + '" data-k="' + it.k + '" ' + (v ? 'checked' : '') + '>' + hint + '</div>';
     const opts = typeof it.o === 'function' ? it.o() : it.o;
     if (it.t === 'select') {
       const cur = opts.some((o) => String(o.v) === String(v)) ? v : opts[0] && opts[0].v;
-      return '<div class="setting"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><select id="' + id + '" data-k="' + it.k + '"' + (it.num ? ' data-num="1"' : '') + '>' +
+      return '<div class="' + cls + '"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><select id="' + id + '" data-k="' + it.k + '">' +
         opts.map((o) => '<option value="' + esc(o.v) + '"' + (String(o.v) === String(cur) ? ' selected' : '') + '>' + esc(o.l) + '</option>').join('') + '</select>' + hint + '</div>';
     }
-    if (it.t === 'seg') {
-      return '<div class="setting"><span class="setting-label" id="' + id + '-l">' + esc(it.l) + '</span><div class="seg" role="radiogroup" aria-labelledby="' + id + '-l">' +
-        opts.map((o) => '<button type="button" role="radio" data-k="' + it.k + '" data-v="' + esc(o.v) + '"' + (it.num ? ' data-num="1"' : '') + ' aria-checked="' + (String(o.v) === String(v)) + '">' + esc(o.l) + '</button>').join('') + '</div>' + hint + '</div>';
-    }
-    if (it.t === 'accent') {
-      return '<div class="setting"><span class="setting-label" id="' + id + '-l">' + esc(it.l) + '</span><div class="swatches" role="radiogroup" aria-labelledby="' + id + '-l">' +
-        Object.keys(ACCENTS).map((k) => '<button type="button" class="swatch" role="radio" data-k="accent" data-v="' + k + '" aria-label="' + ACCENT_NAMES[k] + '" title="' + ACCENT_NAMES[k] + '" style="background:' + ACCENTS[k] + '" aria-checked="' + (k === v) + '"><svg class="ic"><use href="#i-check"/></svg></button>').join('') + '</div></div>';
-    }
-    if (it.t === 'text') {
-      return '<div class="setting"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="text" id="' + id + '" data-k="' + it.k + '" value="' + esc(v) + '" autocomplete="off">' + hint + '</div>';
-    }
-    if (it.t === 'number') {
-      return '<div class="setting"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="number" id="' + id + '" data-k="' + it.k + '" min="' + it.min + '" max="' + it.max + '" value="' + esc(v) + '" inputmode="numeric">' + hint + '</div>';
-    }
+    if (it.t === 'seg') return '<div class="' + cls + '"><span class="setting-label" id="' + id + '-l">' + esc(it.l) + '</span><div class="seg" role="radiogroup" aria-labelledby="' + id + '-l">' +
+      opts.map((o) => '<button type="button" role="radio" data-k="' + it.k + '" data-v="' + esc(o.v) + '" aria-checked="' + (String(o.v) === String(v)) + '">' + esc(o.l) + '</button>').join('') + '</div>' + hint + '</div>';
+    if (it.t === 'text') return '<div class="' + cls + '"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="text" id="' + id + '" data-k="' + it.k + '" value="' + esc(v) + '" autocomplete="off">' + hint + '</div>';
+    if (it.t === 'number') return '<div class="' + cls + '"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label><input type="number" id="' + id + '" data-k="' + it.k + '" min="' + it.min + '" max="' + it.max + '" value="' + esc(v) + '" inputmode="numeric">' + hint + '</div>';
+    if (it.t === 'textarea') return '<div class="' + cls + '"><label class="setting-label" for="' + id + '">' + esc(it.l) + '</label>' + hint + '<textarea id="' + id + '" data-k="' + it.k + '" rows="3" spellcheck="false">' + esc(v) + '</textarea></div>';
     return '';
   }
 
@@ -1304,11 +1307,9 @@
     $('#settingsBody').innerHTML = sc[settingsSection].items.map(controlHtml).join('');
   }
 
-  function changedCount() {
-    return Object.keys(DEFAULTS).filter((k) => !['theme', 'accent', 'density', 'fontScale', 'motion'].includes(k) && S[k] !== DEFAULTS[k]).length;
-  }
+  const UI_KEYS = ['density', 'fontScale', 'motion'];
   function updateBadge() {
-    const n = changedCount();
+    const n = Object.keys(DEFAULTS).filter((k) => !UI_KEYS.includes(k) && S[k] !== DEFAULTS[k]).length;
     $('#settingsBadge').hidden = !n;
   }
 
@@ -1318,10 +1319,9 @@
     if (kind === 'analyze') recompute();
     else if (kind === 'build') { if (state.analysis) rebuild(true); }
     else if (kind === 'view') {
-      if (state.built) { state.quality = computeQuality(); renderTable(false); renderCheck(); }
+      if (state.built) { state.quality = computeQuality(); renderTable(); renderCheck(); }
     } else if (kind === 'ui') applyUi();
-    else if (kind === 'export') { if (state.analysis) renderActions(); }
-    if (state.analysis) renderActions();
+    renderActions();
   }
 
   function findItem(k) {
@@ -1343,10 +1343,7 @@
     if (S[k] === v) return;
     S[k] = v;
     applyChange(it.a);
-    if (k === 'accent' || k === 'theme') updateSwatchState();
   }
-
-  function updateSwatchState() { /* l'état visuel est recalculé par renderSettings */ }
 
   function openSettings(section) {
     if (section) settingsSection = section;
@@ -1387,62 +1384,49 @@
   }
 
   function appSectionHtml() {
-    if (isShell()) return '<div class="setting"><p class="setting-hint">Vous utilisez déjà l’application MayaExcel.</p></div>' + resetBlockHtml();
-    return '<p class="group-title">Télécharger l’application</p><div style="display:grid;gap:.6rem;margin:.5rem 0 1rem">' +
+    const about = '<p class="group-title">Raccourcis clavier</p><p class="setting-hint-wide"><span class="kbd">Ctrl</span> + <span class="kbd">O</span> ajouter des fichiers · <span class="kbd">Ctrl</span> + <span class="kbd">S</span> exporter · <span class="kbd">Ctrl</span> + <span class="kbd">,</span> réglages · <span class="kbd">Ctrl</span> + <span class="kbd">V</span> coller un tableau · flèches : se déplacer dans le tableau · <span class="kbd">Ctrl</span> + <span class="kbd">C</span> copier la cellule</p>' +
+      '<p class="group-title">À propos</p><p class="setting-hint-wide">MayaExcel ' + esc((window.MAYA_CONFIG && window.MAYA_CONFIG.version) || '') + '. Vos fichiers ne quittent jamais votre appareil.</p>';
+    if (isShell()) return '<p class="setting-hint-wide">Vous utilisez déjà l’application MayaExcel.</p>' + about;
+    return '<p class="group-title">Télécharger l’application</p><div style="display:grid;gap:8px;margin-top:8px">' +
       dlCard(FILES.android, 'Android (.apk)', 'Fonctionne sans connexion', 'i-phone') +
       dlCard(FILES.windows, 'Windows (installateur .exe)', 'Installation classique', 'i-monitor') +
       dlCard(FILES.portable, 'Windows (version portable .exe)', 'Sans installation', 'i-monitor') +
-      '</div><p class="setting-hint">iPhone : ouvrez ce site dans Safari, touchez Partager puis « Sur l’écran d’accueil ». Les liens pointent vers la dernière version publiée ; <a href="' + esc(releasesUrl()) + '" target="_blank" rel="noopener">voir toutes les versions</a>.</p>' +
-      resetBlockHtml();
-  }
-
-  function resetBlockHtml() {
-    return '<p class="group-title">Raccourcis clavier</p><div class="setting"><p class="setting-hint"><span class="kbd">Ctrl</span> + <span class="kbd">O</span> choisir des fichiers · <span class="kbd">Ctrl</span> + <span class="kbd">S</span> télécharger · <span class="kbd">Ctrl</span> + <span class="kbd">,</span> réglages · <span class="kbd">Ctrl</span> + <span class="kbd">V</span> coller un tableau</p></div>' +
-      '<p class="group-title">À propos</p><div class="setting"><p class="setting-hint">MayaExcel ' + esc((window.MAYA_CONFIG && window.MAYA_CONFIG.version) || '') + ' · vos fichiers ne quittent jamais votre appareil.</p></div>';
+      '</div><p class="setting-hint-wide">iPhone : ouvrez ce site dans Safari, touchez Partager puis « Sur l’écran d’accueil ». <a href="' + esc(releasesUrl()) + '" target="_blank" rel="noopener">Toutes les versions</a>.</p>' + about;
   }
 
   function openAppDialog(autoDownload) {
-    const body = $('#appBody');
     let html = '';
     if (PLATFORM === 'android') {
       if (autoDownload) startDownload(FILES.android);
       html = '<p>' + (autoDownload ? 'Le téléchargement de <b>MayaExcel.apk</b> démarre.' : 'Installez MayaExcel sur votre téléphone.') + '</p>' +
         '<ol class="steps"><li>Ouvrez le fichier <b>MayaExcel.apk</b> dans vos téléchargements.</li><li>Si Android le demande, autorisez l’installation depuis ce navigateur.</li><li>Touchez <b>Installer</b>, puis ouvrez MayaExcel.</li></ol>' +
-        '<p class="note">Rien ne se passe ? La version est peut-être en cours de publication. Réessayez dans quelques minutes.</p>' +
+        '<p class="note">Rien ne se passe ? La version est peut-être en cours de publication : réessayez dans quelques minutes.</p>' +
         dlCard(FILES.android, 'Télécharger à nouveau', 'MayaExcel.apk', 'i-download');
     } else if (PLATFORM === 'windows') {
       if (autoDownload) startDownload(FILES.windows);
       html = '<p>' + (autoDownload ? 'Le téléchargement de <b>MayaExcel-Setup.exe</b> démarre.' : 'Installez MayaExcel sur votre ordinateur.') + '</p>' +
         '<ol class="steps"><li>Ouvrez le fichier téléchargé.</li><li>Si Windows affiche « Windows a protégé votre PC », cliquez sur <b>Informations complémentaires</b>, puis <b>Exécuter quand même</b>.</li><li>Suivez l’installation, puis ouvrez MayaExcel depuis le menu Démarrer.</li></ol>' +
-        dlCard(FILES.portable, 'Version portable', 'Sans installation : un seul fichier à ouvrir', 'i-monitor');
+        dlCard(FILES.portable, 'Version portable', 'Un seul fichier, sans installation', 'i-monitor');
     } else if (PLATFORM === 'ios') {
       html = '<p>Sur iPhone et iPad, MayaExcel s’ajoute à l’écran d’accueil depuis Safari.</p>' +
         '<ol class="steps"><li>Ouvrez cette page dans <b>Safari</b>.</li><li>Touchez le bouton <b>Partager</b> (le carré avec une flèche vers le haut).</li><li>Choisissez <b>Sur l’écran d’accueil</b>, puis <b>Ajouter</b>.</li></ol>';
     } else {
-      html = '<p>Choisissez la version pour votre appareil.</p><div style="display:grid;gap:.6rem">' +
+      html = '<p>Choisissez la version pour votre appareil.</p>' +
         dlCard(FILES.android, 'Android (.apk)', 'Téléphones et tablettes Android', 'i-phone') +
         dlCard(FILES.windows, 'Windows (installateur)', 'Ordinateurs Windows', 'i-monitor') +
-        dlCard(FILES.portable, 'Windows (portable)', 'Sans installation', 'i-monitor') + '</div>';
+        dlCard(FILES.portable, 'Windows (portable)', 'Sans installation', 'i-monitor');
     }
-    body.innerHTML = html;
+    $('#appBody').innerHTML = html;
     const d = $('#appDlg');
     if (!d.open) d.showModal();
   }
 
-  const STRIP_KEY = 'maya.install.dismissed';
-  function stripDismissed() { try { return localStorage.getItem(STRIP_KEY) === '1'; } catch (e) { return false; } }
-
-  function setupAppPromos() {
+  function setupAppButton() {
     if (isShell() || isStandalone()) return;
-    $('#footApp').hidden = false;
-    const labels = { android: ['App Android', 'Téléchargez l’application Android de MayaExcel.', 'Télécharger'], windows: ['App Windows', 'Téléchargez l’application Windows de MayaExcel.', 'Télécharger'], ios: ['Écran d’accueil', 'Ajoutez MayaExcel à l’écran d’accueil de votre iPhone.', 'Voir comment'] };
-    const L = labels[PLATFORM];
-    if (!L) return;
+    const labels = { android: 'Application Android', windows: 'Application Windows', ios: 'Écran d’accueil' };
+    if (!labels[PLATFORM]) return;
     $('#getAppBtn').hidden = false;
-    $('#getAppLabel').textContent = L[0];
-    $('#installText').textContent = L[1];
-    $('#installStripBtn').textContent = L[2];
-    if (!stripDismissed()) $('#installStrip').hidden = false;
+    $('#getAppLabel').textContent = labels[PLATFORM];
   }
 
   /* ================================================================== */
@@ -1450,45 +1434,26 @@
   /* ================================================================== */
 
   const fileInput = $('#fileInput');
-  const drop = $('#drop');
   const openPicker = () => fileInput.click();
 
-  $('#pickBtn').addEventListener('click', (e) => { e.stopPropagation(); openPicker(); });
-  $('#pasteBtn').addEventListener('click', (e) => { e.stopPropagation(); pasteFromButton(); });
-  $('#demoBtn').addEventListener('click', (e) => { e.stopPropagation(); loadDemo(); });
-  drop.addEventListener('click', openPicker);
-  drop.addEventListener('keydown', (e) => {
-    if (e.target === drop && (e.key === 'Enter' || e.key === ' ')) { e.preventDefault(); openPicker(); }
-  });
+  $('#addBtn').addEventListener('click', openPicker);
+  $('#pickBtn').addEventListener('click', openPicker);
+  $('#pasteBtn').addEventListener('click', pasteFromButton);
+  $('#demoBtn').addEventListener('click', loadDemo);
   fileInput.addEventListener('change', () => {
     const list = Array.from(fileInput.files);
     fileInput.value = '';
     addFiles(list);
   });
 
-  function swapTitle(text) {
-    const t = $('#dropTitle');
-    t.textContent = text;
-    t.classList.remove('swap');
-    void t.offsetWidth;
-    t.classList.add('swap');
-  }
-  ['dragenter', 'dragover'].forEach((ev) =>
-    window.addEventListener(ev, (e) => {
-      if (!e.dataTransfer || !Array.from(e.dataTransfer.types || []).includes('Files')) return;
-      e.preventDefault();
-      if (!drop.classList.contains('is-over')) swapTitle('Relâchez pour fusionner');
-      drop.classList.add('is-over');
-    })
-  );
-  window.addEventListener('dragleave', (e) => {
-    if (e.relatedTarget) return;
-    if (drop.classList.contains('is-over')) swapTitle('Déposez vos fichiers Excel ici');
-    drop.classList.remove('is-over');
-  });
+  let dragDepth = 0;
+  const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).includes('Files');
+  window.addEventListener('dragenter', (e) => { if (hasFiles(e)) { e.preventDefault(); dragDepth++; document.body.classList.add('dragging'); } });
+  window.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
+  window.addEventListener('dragleave', (e) => { if (hasFiles(e) && --dragDepth <= 0) { dragDepth = 0; document.body.classList.remove('dragging'); } });
   window.addEventListener('drop', (e) => {
-    if (drop.classList.contains('is-over')) swapTitle('Déposez vos fichiers Excel ici');
-    drop.classList.remove('is-over');
+    dragDepth = 0;
+    document.body.classList.remove('dragging');
     if (!e.dataTransfer || !e.dataTransfer.files.length) return;
     e.preventDefault();
     addFiles(e.dataTransfer.files);
@@ -1505,29 +1470,24 @@
     state.overrides = {};
     state.separate = [];
     state.colOrder = [];
+    state.noMerge = new Set();
     state.query = '';
     recompute();
-    renderFiles();
-    window.scrollTo({ top: 0, behavior: reduceMotion() ? 'auto' : 'smooth' });
   });
 
   $('#filesList').addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-act]');
-    if (!btn || btn.tagName === 'INPUT') return;
+    const btn = e.target.closest('button[data-act]');
+    if (!btn) return;
     const id = Number(btn.dataset.id);
     const i = state.files.findIndex((f) => f.id === id);
     if (i < 0) return;
     if (btn.dataset.act === 'remove') {
-      const li = btn.closest('.file');
-      const done = () => { state.files = state.files.filter((f) => f.id !== id); recompute(); renderFiles(); };
-      if (reduceMotion() || !li) return done();
-      li.classList.add('leaving');
-      setTimeout(done, 230);
+      state.files.splice(i, 1);
+      recompute();
     } else if (btn.dataset.act === 'up' || btn.dataset.act === 'down') {
       const j = btn.dataset.act === 'up' ? i - 1 : i + 1;
       if (j < 0 || j >= state.files.length) return;
       [state.files[i], state.files[j]] = [state.files[j], state.files[i]];
-      renderFiles();
       recompute();
     }
   });
@@ -1545,7 +1505,7 @@
     clearTimeout(searchTimer);
     searchTimer = setTimeout(() => {
       state.query = e.target.value;
-      if (state.built) renderTable(false);
+      if (state.built) renderTable();
     }, 150);
   });
   $('#sortBy').addEventListener('change', (e) => {
@@ -1562,7 +1522,7 @@
   });
   $('#toolbarSettings').addEventListener('click', () => openSettings('fusion'));
 
-  /* Onglets */
+  /* Onglets et navigation mobile */
   $('.tabs').addEventListener('click', (e) => {
     const t = e.target.closest('.tab');
     if (t) setTab(t.dataset.tab);
@@ -1575,17 +1535,92 @@
     setTab(next.dataset.tab);
     next.focus();
   });
+  $('#mobilenav').addEventListener('click', (e) => {
+    const b = e.target.closest('[data-nav]');
+    if (!b) return;
+    if (b.dataset.nav === 'sources') setView('sources');
+    else {
+      document.body.dataset.view = 'main';
+      setTab(b.dataset.nav);
+    }
+  });
 
-  /* Tableau */
-  $('#sheet').addEventListener('click', (e) => {
+  /* Tableau : sélection, tri par en-tête, clavier, redimensionnement */
+  const sheet = $('#sheet');
+  sheet.addEventListener('click', (e) => {
+    const sortBtn = e.target.closest('[data-sort]');
+    if (sortBtn) {
+      const key = sortBtn.dataset.sort;
+      if (S.sortBy === key) S.sortDir = S.sortDir === 'asc' ? 'desc' : 'asc';
+      else { S.sortBy = key; S.sortDir = 'asc'; }
+      saveSettings();
+      renderToolbar();
+      rebuild(false);
+      return;
+    }
     const td = e.target.closest('td[data-r]');
     if (td) selectCell(td);
   });
+  sheet.addEventListener('keydown', (e) => {
+    const k = e.key;
+    if (k === 'ArrowDown') { e.preventDefault(); moveSel(1, 0); }
+    else if (k === 'ArrowUp') { e.preventDefault(); moveSel(-1, 0); }
+    else if (k === 'ArrowRight') { e.preventDefault(); moveSel(0, 1); }
+    else if (k === 'ArrowLeft') { e.preventDefault(); moveSel(0, -1); }
+    else if ((e.ctrlKey || e.metaKey) && (k === 'c' || k === 'C')) {
+      const td = $('#sheet td.sel');
+      if (td && navigator.clipboard) { e.preventDefault(); navigator.clipboard.writeText(td.textContent).then(() => toast('Cellule copiée.')).catch(() => {}); }
+    }
+  });
+  sheet.addEventListener('pointerdown', (e) => {
+    const h = e.target.closest('.rs');
+    if (!h) return;
+    e.preventDefault();
+    const table = sheet.querySelector('table');
+    const j = Number(h.dataset.j);
+    const th = h.parentElement;
+    const col = table.querySelectorAll('col')[j + 1];
+    const startX = e.clientX;
+    const startW = th.offsetWidth;
+    const label = state.built.headers[j];
+    h.setPointerCapture(e.pointerId);
+    h.classList.add('active');
+    const move = (ev) => {
+      const w = clamp(startW + ev.clientX - startX, 50, 700);
+      col.style.width = w + 'px';
+      table.style.width = Array.from(table.querySelectorAll('col')).reduce((a, c) => a + parseFloat(c.style.width), 0) + 'px';
+      state.colW[label] = w;
+    };
+    const up = () => {
+      h.classList.remove('active');
+      h.removeEventListener('pointermove', move);
+      h.removeEventListener('pointerup', up);
+      h.removeEventListener('pointercancel', up);
+    };
+    h.addEventListener('pointermove', move);
+    h.addEventListener('pointerup', up);
+    h.addEventListener('pointercancel', up);
+  });
+
+  /* Contrôle */
   $('#panelCheck').addEventListener('click', (e) => {
-    const b = e.target.closest('[data-goto]');
-    if (!b) return;
-    const [r, c] = b.dataset.goto.split(':').map(Number);
-    gotoCell(r, c);
+    const g = e.target.closest('[data-goto]');
+    if (g) {
+      const [r, c] = g.dataset.goto.split(':').map(Number);
+      gotoCell(r, c);
+      return;
+    }
+    const sp = e.target.closest('[data-split]');
+    if (sp) {
+      sp.dataset.split.split(',').filter(Boolean).forEach((i) => state.noMerge.add(Number(i)));
+      toast('Lignes dissociées.');
+      rebuild(true);
+      return;
+    }
+    if (e.target.closest('[data-act="resetsplit"]')) {
+      state.noMerge = new Set();
+      rebuild(true);
+    }
   });
 
   /* Colonnes */
@@ -1645,25 +1680,10 @@
     if (again && !again.disabled) again.focus();
   });
 
-  /* Actions */
-  $('#dlBtn').addEventListener('click', doDownload);
-  $('#copyBtn').addEventListener('click', doCopy);
-  $('#shareBtn').addEventListener('click', doShare);
-  $('#formatSel').addEventListener('change', (e) => {
-    S.format = e.target.value;
-    saveSettings();
-    $('#dlLabel').textContent = 'Télécharger (.' + FORMATS[S.format].ext + ')';
-  });
+  /* Export */
+  $('#dlBtn').addEventListener('click', () => doDownload());
 
-  /* Thème */
-  $('#themeBtn').addEventListener('click', () => {
-    S.theme = isDark() ? 'light' : 'dark';
-    saveSettings();
-    applyUi();
-    if ($('#settingsDlg').open) renderSettings();
-  });
-
-  /* Panneau de réglages */
+  /* Réglages */
   $('#settingsBtn').addEventListener('click', () => openSettings());
   $('#settingsTabs').addEventListener('click', (e) => {
     const b = e.target.closest('[data-sec]');
@@ -1676,8 +1696,7 @@
   settingsBody.addEventListener('change', (e) => {
     const el = e.target;
     if (!el.dataset.k) return;
-    if (el.type === 'checkbox') setSetting(el.dataset.k, el.checked);
-    else setSetting(el.dataset.k, el.value);
+    setSetting(el.dataset.k, el.type === 'checkbox' ? el.checked : el.value);
     renderSettings();
   });
   settingsBody.addEventListener('click', (e) => {
@@ -1690,31 +1709,19 @@
     S = Object.assign({}, DEFAULTS);
     saveSettings();
     applyUi();
-    updateBadge();
     renderSettings();
-    if (state.analysis) { recompute(); renderActions(); }
+    if (state.analysis) recompute();
+    else renderAll();
     toast('Réglages réinitialisés.');
   });
 
-  /* Fenêtres : fermeture par bouton ou clic à l'extérieur */
   $$('dialog').forEach((d) => {
     d.addEventListener('click', (e) => { if (e.target === d || e.target.closest('[data-close]')) d.close(); });
   });
 
   /* Application */
   $('#getAppBtn').addEventListener('click', () => openAppDialog(true));
-  $('#installStripBtn').addEventListener('click', () => openAppDialog(true));
-  $('#footApp').addEventListener('click', () => openAppDialog(false));
-  $('#installDismiss').addEventListener('click', () => {
-    $('#installStrip').hidden = true;
-    try { localStorage.setItem(STRIP_KEY, '1'); } catch (e) { /* ignoré */ }
-  });
   window.addEventListener('beforeinstallprompt', (e) => e.preventDefault()); // on propose l'APK / l'EXE, pas l'installation par le navigateur
-
-  /* En-tête qui se détache au défilement */
-  const topBar = $('#top');
-  const onScroll = () => topBar.classList.toggle('is-stuck', window.scrollY > 6);
-  window.addEventListener('scroll', onScroll, { passive: true });
 
   /* Raccourcis clavier */
   document.addEventListener('keydown', (e) => {
@@ -1729,10 +1736,8 @@
   /* ================================================================== */
 
   applyUi();
-  updateBadge();
-  onScroll();
-  setupAppPromos();
-  renderFiles();
+  setupAppButton();
+  renderAll();
 
   if ('serviceWorker' in navigator && !isShell() && (location.protocol === 'https:' || location.hostname === 'localhost')) {
     window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js').catch(() => {}));

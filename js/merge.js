@@ -27,6 +27,12 @@
   const stripAccents = (s) => String(s).normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase();
   const singular = (w) => (w.length > 3 && w.endsWith('s') && !w.endsWith('ss') ? w.slice(0, -1) : w);
 
+  const ABBR = {
+    dt: ['date'], ddn: ['date', 'naissance'], dob: ['date', 'naissance'], tph: ['telephone'], mat: ['matricule'], mle: ['matricule'],
+    matr: ['matricule'], adr: ['adresse'], dpt: ['departement'], dept: ['departement'], fct: ['fonction'], fonc: ['fonction'],
+    sal: ['salaire'], nb: ['nombre'], nbr: ['nombre'], nbre: ['nombre'], mob: ['mobile'], nat: ['nationalite'], prof: ['profession'], sit: ['situation'],
+  };
+
   function tokens(text) {
     let t = stripAccents(text)
       .replace(/[’'`´]/g, ' ')
@@ -35,7 +41,8 @@
       .split(' ')
       .filter(Boolean)
       .filter((w) => !STOP.has(w))
-      .map(singular);
+      .map(singular)
+      .reduce((acc, w) => acc.concat(ABBR[w] || [w]), []);
     if (t.length > 1) {
       const rest = t.filter((w) => !NUM_WORDS.has(w));
       if (rest.length) t = rest;
@@ -172,7 +179,9 @@
 
   const isEmpty = (v) => v === null || v === undefined || (typeof v === 'string' && v.trim() === '');
 
-  function cleanValue(v) {
+  const NULL_RE = /^(n\/?a|nan|null|none|n[ée]ant|aucune?|-{1,3}|[—–]|\.{1,3}|\?{1,3})$/i;
+
+  function cleanValue(v, nullTokens) {
     if (isEmpty(v)) return null;
     if (v instanceof Date) {
       if (isNaN(v.getTime())) return null;
@@ -182,8 +191,12 @@
     if (typeof v === 'number') return Number.isFinite(v) ? v : null;
     if (typeof v === 'boolean') return v;
     const s = String(v).replace(/[\s\u00a0]+/g, ' ').trim();
-    if (!s || ERROR_RE.test(s)) return null;
+    if (!s || ERROR_RE.test(s) || (nullTokens && NULL_RE.test(s))) return null;
     return s;
+  }
+
+  function serialToDate(n) {
+    return new Date(Date.UTC(1899, 11, 30) + Math.round(n * 1440) * 60000);
   }
 
   function mkDate(y, m, d) {
@@ -350,6 +363,41 @@
     return dataish || nums / cells.length >= 0.5;
   }
 
+  /** Fiche individuelle « libellé : valeur » → tableau à une ligne. */
+  function detectForm(rows) {
+    const pairs = [];
+    const groups = new Set();
+    let known = 0;
+    let total = 0;
+    let maxFilled = 0;
+    for (let r = 0; r < Math.min(rows.length, 300); r++) {
+      const row = rows[r] || [];
+      const idxs = [];
+      row.forEach((c, i) => { if (!isEmpty(c)) idxs.push(i); });
+      if (!idxs.length) continue;
+      total++;
+      maxFilled = Math.max(maxFilled, idxs.length);
+      let label = row[idxs[0]];
+      if (typeof label !== 'string') continue;
+      let value;
+      if (idxs.length >= 2) value = row[idxs[1]];
+      else {
+        const m = /^(.{2,40}?)\s*[:：]\s*(.+)$/.exec(label);
+        if (!m) continue;
+        label = m[1];
+        value = m[2];
+      }
+      const text = label.replace(/[:：]\s*$/, '').trim();
+      if (!text || text.length > 60) continue;
+      const g = resolveGroup(tokens(text));
+      pairs.push({ text, value, known: !!g });
+      if (g) { known++; groups.add(g); }
+    }
+    if (known < 3 || groups.size < 3 || known / Math.max(total, 1) < 0.5 || maxFilled > 4) return null;
+    const used = pairs.filter((p) => !isEmpty(p.value) || p.known);
+    return [used.map((p) => p.text), used.map((p) => (isEmpty(p.value) ? null : p.value))];
+  }
+
   function readSheet(rows, ho) {
     ho = ho || { mode: 'auto' };
     if (!rows || !rows.length) return null;
@@ -403,6 +451,25 @@
       }
       headers.push({ idx: j, text });
     }
+    // Titres sur deux lignes : une ligne « parent » au-dessus (Père / Mère…) qui lève les doublons.
+    if (ho.multi && !headerless && headerRow > 0) {
+      const parent = rows[headerRow - 1] || [];
+      const pf = parent.filter((c) => !isEmpty(c));
+      const hf = head.filter((c) => !isEmpty(c));
+      if (pf.length >= 2 && pf.length < hf.length && pf.every((c) => typeof c === 'string')) {
+        const filledParent = [];
+        let cur = '';
+        for (let j = 0; j < width; j++) {
+          if (!isEmpty(parent[j])) cur = headerText(parent[j]);
+          filledParent[j] = cur;
+        }
+        const counts = new Map();
+        headers.forEach((h) => { const k = keyOf(tokens(h.text)); counts.set(k, (counts.get(k) || 0) + 1); });
+        headers.forEach((h) => {
+          if (counts.get(keyOf(tokens(h.text))) > 1 && filledParent[h.idx]) h.text = filledParent[h.idx] + ' ' + h.text;
+        });
+      }
+    }
     return headers.length ? { headerRow, headerless, start, headers } : null;
   }
 
@@ -417,7 +484,22 @@
    * @param options {allSheets, splitNames, separate:[clés d'intitulés à ne jamais regrouper]}
    */
   function analyze(files, options) {
-    const opts = Object.assign({ allSheets: true, splitNames: true, separate: [], sensitivity: 'balanced', contentMatch: true, headerMode: 'auto', headerRow: 1 }, options || {});
+    const opts = Object.assign({ allSheets: true, splitNames: true, separate: [], sensitivity: 'balanced', contentMatch: true, headerMode: 'auto', headerRow: 1, formDetect: true, multiHeader: true, nullTokens: true, ignoreColumns: '', synonyms: '' }, options || {});
+    const parseList = (t) => String(t || '').split(/[\n,;]+/).map((x) => x.trim()).filter(Boolean);
+    const ignore = new Set(parseList(opts.ignoreColumns).map((x) => keyOf(tokens(x))).filter(Boolean));
+    const customLabels = new Map();
+    const custom = new Map();
+    String(opts.synonyms || '').split(/\r?\n/).forEach((line) => {
+      const m = /^(.+?)\s*(?:=|→|->)\s*(.+)$/.exec(line.trim());
+      if (!m) return;
+      const from = keyOf(tokens(m[1]));
+      const tt = tokens(m[2]);
+      if (!from || !tt.length) return;
+      const g = resolveGroup(tt) || 'x:' + keyOf(tt);
+      if (g.indexOf('x:') === 0) customLabels.set(g, prettify(m[2]));
+      custom.set(from, g);
+    });
+    const labelOf = (g) => GROUP_LABEL[g] || customLabels.get(g) || g;
     const SENS = {
       strict: { fuzzy: 0.93, syn: 0.92, jac: 2, overlapMin: 1, overlap: 2 },
       balanced: { fuzzy: 0.86, syn: 0.86, jac: 0.75, overlapMin: 2, overlap: 0.5 },
@@ -425,7 +507,7 @@
     };
     const sens = SENS[opts.sensitivity] || SENS.balanced;
     const useContent = opts.contentMatch !== false;
-    const headerOpts = { mode: opts.headerMode, row: Number(opts.headerRow) || 1 };
+    const headerOpts = { mode: opts.headerMode, row: Number(opts.headerRow) || 1, multi: opts.multiHeader !== false };
     const separate = new Set(opts.separate || []);
     const cols = [];
     const byId = new Map();
@@ -444,7 +526,7 @@
         label = prettify(o.text);
       } else if (o.group) {
         key = o.group;
-        label = GROUP_LABEL[o.group];
+        label = labelOf(o.group);
       } else if (o.generic) {
         key = 'gen:' + ++genSeq;
         label = o.text;
@@ -542,7 +624,16 @@
       if (file.error) return;
 
       const sheets = opts.allSheets ? file.sheets : file.sheets.slice(0, 1);
-      const parsed = sheets.map((sh) => ({ sh, info: readSheet(sh.rows, headerOpts) }));
+      const parsed = sheets.map((sh0) => {
+        let rows = sh0.rows;
+        let form = false;
+        if (opts.formDetect !== false && headerOpts.mode === 'auto') {
+          const f = detectForm(rows);
+          if (f) { rows = f; form = true; }
+        }
+        const sh = { name: sh0.name, rows, form };
+        return { sh, info: readSheet(rows, headerOpts) };
+      });
       const usable = parsed.filter((p) => p.info);
       parsed.forEach((p) => {
         if (!p.info) fr.sheets.push({ name: p.sh.name, rows: 0, cols: 0, empty: true });
@@ -552,19 +643,16 @@
         if (info.headerless) headerlessSheets++;
 
         // 1. Lignes nettoyées + échantillons par colonne
-        const heads = info.headers.map((h) => ({
-          idx: h.idx,
-          text: h.text,
-          t: tokens(h.text),
-          generic: info.headerless || isGenericHeader(h.text),
-        }));
+        const heads = info.headers
+          .map((h) => ({ idx: h.idx, text: h.text, t: tokens(h.text), generic: info.headerless || isGenericHeader(h.text) }))
+          .filter((h) => h.generic || !ignore.has(keyOf(h.t)));
         const samples = heads.map(() => []);
         const rowsClean = [];
         for (let r = info.start; r < sh.rows.length; r++) {
           const row = sh.rows[r];
           if (!row) continue;
           const cells = heads.map((h, i) => {
-            const v = cleanValue(row[h.idx]);
+            const v = cleanValue(row[h.idx], opts.nullTokens !== false);
             if (v !== null && samples[i].length < 300) samples[i].push(v);
             return v;
           });
@@ -574,7 +662,7 @@
         // 2. Quel type d'information contient chaque colonne ?
         heads.forEach((h, i) => {
           h.prof = profile(samples[i]);
-          h.group = h.generic ? null : resolveGroup(h.t, sens.syn);
+          h.group = h.generic ? null : custom.get(keyOf(h.t)) || resolveGroup(h.t, sens.syn);
           h.groupReason = h.group ? 'synonyme' : null;
         });
         if (useContent) heads.forEach((h) => {
@@ -641,18 +729,29 @@
           records.push({ fileId, file: baseName(file.name), source: label, vals });
           count++;
         });
-        fr.sheets.push({ name: sh.name, rows: count, cols: map.length, headerRow: info.headerless ? null : info.headerRow + 1, headerless: info.headerless });
+        fr.sheets.push({ name: sh.name, rows: count, cols: map.length, headerRow: info.headerless ? null : info.headerRow + 1, headerless: info.headerless, form: sh.form });
         fr.rows += count;
       });
     });
 
+    /* ---- Dates saisies comme numéros de série Excel ---------------- */
+    records.forEach((r) => {
+      for (const id in r.vals) {
+        const c = byId.get(id);
+        const v = r.vals[id];
+        if ((c.group === 'naissance' || c.group === 'dateembauche') && typeof v === 'number' && v >= 1 && v < 80000) r.vals[id] = serialToDate(v);
+      }
+    });
+
     /* ---- Typage des colonnes : dates, nombres, téléphones ---------- */
-    const stats = new Map(cols.map((c) => [c.id, { n: 0, date: 0, isNum: 0, num: 0 }]));
+    const BOOL = new Set(['oui', 'o', 'yes', 'y', 'true', 'vrai', 'non', 'n', 'no', 'false', 'faux']);
+    const stats = new Map(cols.map((c) => [c.id, { n: 0, date: 0, isNum: 0, num: 0, bool: 0 }]));
     records.forEach((r) => {
       for (const id in r.vals) {
         const v = r.vals[id];
         const s = stats.get(id);
         s.n++;
+        if (typeof v === 'string' && BOOL.has(stripAccents(v).trim())) s.bool++;
         if (v instanceof Date || parseDateText(v)) s.date++;
         if (typeof v === 'number') s.isNum++;
         else if (parseNumberText(v) !== null) s.num++;
@@ -663,6 +762,7 @@
       if (!s.n) return;
       if (['telephone', 'matricule', 'cnss'].includes(c.group)) c.type = 'text';
       else if (s.date / s.n >= 0.7) c.type = 'date';
+      else if (s.n >= 2 && s.bool / s.n >= 0.9) c.type = 'bool';
       else if ((s.isNum / s.n >= 0.7 || ['salaire', 'enfants'].includes(c.group)) && (s.isNum + s.num) / s.n >= 0.7) c.type = 'number';
     });
     records.forEach((r) => {
@@ -781,11 +881,33 @@
     return (plus ? '+' : '') + grp(d);
   }
 
-  function cleanByGroup(group, v, st) {
+  function normMarital(v) {
+    const k = stripAccents(v).replace(/[^a-z ]/g, '').trim();
+    if (/^(celib|single)/.test(k)) return 'Célibataire';
+    if (/^(marie|married)/.test(k)) return 'Marié(e)';
+    if (/^divorc/.test(k)) return 'Divorcé(e)';
+    if (/^veu/.test(k) || /^widow/.test(k)) return 'Veuf(ve)';
+    if (/^(concubin|union|pacs)/.test(k)) return 'Union libre';
+    return v;
+  }
+
+  function normBool(v) {
+    const k = stripAccents(v).trim();
+    if (['oui', 'o', 'yes', 'y', 'true', 'vrai'].indexOf(k) !== -1) return 'Oui';
+    if (['non', 'n', 'no', 'false', 'faux'].indexOf(k) !== -1) return 'Non';
+    return v;
+  }
+
+  function cleanCell(col, v, st) {
+    const group = col.group;
     if (group === 'telephone') {
       return st.phoneFormat && st.phoneFormat !== 'keep' && (typeof v === 'string' || typeof v === 'number') ? formatPhone(v, st.phoneFormat, st.phoneCC) : v;
     }
     if (typeof v !== 'string') return v;
+    if (st.normCats !== false) {
+      if (col.type === 'bool') return normBool(v);
+      if (group === 'matrimonial') return normMarital(v);
+    }
     switch (group) {
       case 'nom': return caseOf(v, st.nomCase || 'upper');
       case 'prenom': return caseOf(v, st.prenomCase || 'title');
@@ -798,25 +920,70 @@
     }
   }
 
-  const nameTokens = (s) => stripAccents(s).split(/[^a-z]+/).filter((w) => w.length >= 2);
+  /** Unifie les libellés presque identiques d'une colonne (casse, accents, fautes de frappe). */
+  function unifyMap(values) {
+    const cnt = new Map();
+    values.forEach((v) => cnt.set(v, (cnt.get(v) || 0) + 1));
+    const out = new Map();
+    if (cnt.size < 2 || cnt.size > 300) return out;
+    const loose = (x) => stripAccents(x).replace(/[^a-z0-9]+/g, '');
+    const byLoose = new Map();
+    cnt.forEach((n, v) => {
+      const k = loose(v);
+      if (!byLoose.has(k)) byLoose.set(k, []);
+      byLoose.get(k).push([v, n]);
+    });
+    const reps = [];
+    byLoose.forEach((arr, k) => {
+      arr.sort((a, b) => b[1] - a[1] || Number(/[^\x00-\x7f]/.test(b[0])) - Number(/[^\x00-\x7f]/.test(a[0])) || b[0].length - a[0].length);
+      reps.push({ key: k, canon: arr[0][0], total: arr.reduce((t, x) => t + x[1], 0), members: arr.map((x) => x[0]) });
+    });
+    reps.sort((a, b) => b.total - a.total);
+    const clusters = [];
+    reps.forEach((r) => {
+      const host = clusters.find((c) => c.key.length >= 6 && r.key.length >= 6 && digitsOf(c.key) === digitsOf(r.key) && similarity(c.key, r.key) >= 0.88);
+      if (host) host.members.push(...r.members);
+      else clusters.push({ key: r.key, canon: r.canon, members: r.members.slice() });
+    });
+    clusters.forEach((c) => c.members.forEach((m) => m !== c.canon && out.set(m, c.canon)));
+    return out;
+  }
 
-  function nameSimilar(a, b) {
+  const nameTokens = (x) => stripAccents(x).split(/[^a-z]+/).filter((w) => w.length >= 2);
+
+  function nameSimilar(a, b, fuzzy) {
     if (a === b) return true;
     const ta = a.split(' ');
     const tb = b.split(' ');
     const [small, big] = ta.length <= tb.length ? [ta, tb] : [tb, ta];
     if (small.every((w) => big.includes(w))) return true;
+    if (fuzzy) {
+      // Chaque mot du nom le plus court doit retrouver un mot quasi identique (faute de frappe, accent oublié).
+      if (small.every((w) => big.some((x) => x === w || (w.length >= 5 && x.length >= 5 && similarity(w, x) >= 0.85)))) return true;
+    }
     return similarity(a, b) >= 0.82;
   }
 
+  const looseSig = (v) => {
+    if (v === undefined || v === null) return '';
+    if (v instanceof Date) return 'd' + v.getTime();
+    if (typeof v === 'number') return 'n' + v;
+    return stripAccents(v).replace(/[^a-z0-9]+/g, '');
+  };
+
+  const BY_LABEL = { mat: 'matricule', mail: 'e-mail', tel: 'téléphone', name: 'nom', 'name~': 'nom proche', custom: 'colonne choisie', sig: 'ligne identique' };
+
   /**
-   * @param st {cols:[{id,label,include,into?}], source, numbering, combine, keyCol:'auto'|id, conflict:'first'|'last'|'longest',
-   *            clean, nomCase, prenomCase, emailLower, sexNorm, placeCase, phoneFormat, phoneCC, dropEmptyCols,
-   *            sortBy:'auto'|'none'|id, sortDir, sortBy2:'none'|id, sortDir2}
+   * @param st {cols:[{id,label,include,into?}], source, numbering, combine, personMatch:'strict'|'normal'|'large', fuzzyNames, useBirth,
+   *            keyCol:'auto'|id, conflict:'first'|'last'|'longest'|'majority', noMerge:[index d'enregistrements],
+   *            clean, nomCase, prenomCase, emailLower, sexNorm, normCats, placeCase, unifyLabels, phoneFormat, phoneCC, dropEmptyCols,
+   *            sortBy:'auto'|'none'|id, sortDir, sortBy2:'none'|id, sortDir2, fmtDate}
    */
   function build(analysis, st) {
     const meta = new Map(analysis.columns.map((c) => [c.id, c]));
     const colsAll = st.cols.filter((c) => meta.has(c.id));
+    const fmtD = st.fmtDate || dateToText;
+    const policy = st.conflict || 'first';
 
     // Rattachements manuels : la colonne B est versée dans la colonne A.
     const into = new Map();
@@ -827,7 +994,7 @@
       .filter((c) => c.include && !into.has(c.id))
       .map((c) => ({ id: c.id, label: c.label, group: meta.get(c.id).group, meta: meta.get(c.id) }));
 
-    const recs = analysis.records.map((r) => {
+    const recs = analysis.records.map((r, i) => {
       const vals = {};
       Object.keys(r.vals).forEach((id) => {
         if (!into.has(id)) vals[id] = r.vals[id];
@@ -835,13 +1002,22 @@
       Object.keys(r.vals).forEach((id) => {
         if (into.has(id) && vals[into.get(id)] === undefined) vals[into.get(id)] = r.vals[id];
       });
-      return { source: r.source, vals };
+      return { idx: i, source: r.source, vals };
     });
 
     if (st.clean) {
       recs.forEach((r) => {
-        for (const id in r.vals) r.vals[id] = cleanByGroup(meta.get(id).group, r.vals[id], st);
+        for (const id in r.vals) r.vals[id] = cleanCell(meta.get(id), r.vals[id], st);
       });
+      if (st.unifyLabels) {
+        const UG = new Set(['poste', 'service', 'ville', 'pays', 'nationalite', 'statut', 'contrat', 'diplome', 'matrimonial']);
+        analysis.columns.filter((c) => UG.has(c.group)).forEach((c) => {
+          const vals = [];
+          recs.forEach((r) => typeof r.vals[c.id] === 'string' && vals.push(r.vals[c.id]));
+          const map = unifyMap(vals);
+          if (map.size) recs.forEach((r) => { const v = r.vals[c.id]; if (typeof v === 'string' && map.has(v)) r.vals[c.id] = map.get(v); });
+        });
+      }
     }
 
     const ids = (g) => analysis.columns.filter((c) => c.group === g).map((c) => c.id);
@@ -851,17 +1027,21 @@
     const nomIds = ids('nom');
     const preIds = ids('prenom');
     const fullIds = ids('nomcomplet');
+    const birthIds = ids('naissance');
     const first = (r, list) => {
       for (const id of list) if (r.vals[id] !== undefined) return r.vals[id];
       return undefined;
     };
     const customKey = st.keyCol && st.keyCol !== 'auto' && meta.has(st.keyCol) ? (into.get(st.keyCol) || st.keyCol) : null;
+    const level = st.personMatch || 'normal';
+    const fuzzy = st.fuzzyNames !== false;
+    const useBirth = st.useBirth !== false;
 
     function keysOf(r) {
-      const k = { mat: null, mail: null, tel: null, name: null, custom: null };
+      const k = { mat: null, mail: null, tel: null, name: null, custom: null, dob: null };
       if (customKey) {
         const v = r.vals[customKey];
-        if (v !== undefined) k.custom = stripAccents(v instanceof Date ? v.getTime() : String(v)).replace(/\s+/g, ' ').trim();
+        if (v !== undefined) k.custom = looseSig(v);
         return k;
       }
       const m = first(r, matIds);
@@ -871,6 +1051,8 @@
       const t = first(r, telIds);
       const d = t === undefined ? null : phoneDigits(t);
       if (d) k.tel = d.slice(-8);
+      const b = first(r, birthIds);
+      if (b instanceof Date) k.dob = String(b.getTime());
       let toks = [];
       const n = first(r, nomIds);
       const p = first(r, preIds);
@@ -884,71 +1066,134 @@
       return k;
     }
 
-    const KINDS = customKey ? ['custom'] : ['mat', 'mail', 'name', 'tel'];
+    const KINDS = customKey ? ['custom'] : level === 'strict' ? ['mat', 'mail', 'tel'] : ['mat', 'mail', 'name', 'tel'];
     const strongKey = (k) => (customKey ? !!k.custom : !!(k.mat || k.mail || k.tel || (k.name && k.name.split(' ').length >= 2)));
 
-    function absorb(target, r) {
-      target.n++;
-      target.sources.add(r.source);
-      for (const id in r.vals) {
-        const v = r.vals[id];
-        const cur = target.vals[id];
-        if (cur === undefined) {
-          target.vals[id] = v;
-        } else if (signature(cur) !== signature(v)) {
-          const alts = (target.conflicts[id] = target.conflicts[id] || new Set());
-          const show = (x) => (x instanceof Date ? dateToText(x) : String(x));
-          const pick = st.conflict === 'last' || (st.conflict === 'longest' && String(v).length > String(cur).length);
-          if (pick) {
-            alts.add(show(cur));
-            target.vals[id] = v;
-          } else alts.add(show(v));
+    function compatible(g, k) {
+      if (customKey) return true;
+      if (useBirth && g.k.dob && k.dob && g.k.dob !== k.dob) return false;
+      if (g.k.mat && k.mat) return g.k.mat === k.mat; // le matricule fait foi
+      if (g.k.name && k.name && !nameSimilar(g.k.name, k.name, fuzzy)) return false;
+      return true;
+    }
+
+    const newGroup = (r, k) => {
+      const g = { vals: Object.assign({}, r.vals), sources: new Set([r.source]), conflicts: {}, n: 1, k, by: new Set(), idx: [r.idx], parent: null, counts: null };
+      if (policy === 'majority') {
+        g.counts = {};
+        for (const id in r.vals) g.counts[id] = new Map([[looseSig(r.vals[id]), { n: 1, v: r.vals[id] }]]);
+      }
+      return g;
+    };
+
+    function absorbVals(t, vals) {
+      for (const id in vals) {
+        const v = vals[id];
+        const cur = t.vals[id];
+        if (t.counts) {
+          const m = t.counts[id] || (t.counts[id] = new Map());
+          const key = looseSig(v);
+          m.set(key, { n: (m.get(key) ? m.get(key).n : 0) + 1, v: m.get(key) ? m.get(key).v : v });
+        }
+        if (cur === undefined) t.vals[id] = v;
+        else if (looseSig(cur) !== looseSig(v)) {
+          const alts = (t.conflicts[id] = t.conflicts[id] || new Set());
+          const pick = policy === 'last' || (policy === 'longest' && String(v).length > String(cur).length);
+          if (pick) { alts.add(cur instanceof Date ? fmtD(cur) : String(cur)); t.vals[id] = v; }
+          else alts.add(v instanceof Date ? fmtD(v) : String(v));
         }
       }
     }
 
-    let groups = [];
-    let absorbed = 0;
+    const find = (g) => {
+      while (g && g.parent) g = g.parent;
+      return g;
+    };
+
+    function mergeGroups(a, b) {
+      b.parent = a;
+      absorbVals(a, b.vals);
+      for (const id in b.conflicts) {
+        const al = (a.conflicts[id] = a.conflicts[id] || new Set());
+        b.conflicts[id].forEach((x) => al.add(x));
+      }
+      if (a.counts && b.counts) {
+        for (const id in b.counts) {
+          const m = a.counts[id] || (a.counts[id] = new Map());
+          b.counts[id].forEach((e, key) => { const c = m.get(key); m.set(key, { n: (c ? c.n : 0) + e.n, v: c ? c.v : e.v }); });
+        }
+      }
+      b.sources.forEach((x) => a.sources.add(x));
+      b.by.forEach((x) => a.by.add(x));
+      a.idx = a.idx.concat(b.idx);
+      a.n += b.n;
+      ['mat', 'name', 'dob'].forEach((x) => { if (!a.k[x]) a.k[x] = b.k[x]; });
+    }
+
+    const noMerge = new Set(st.noMerge || []);
+    const all = [];
     if (st.combine) {
       const maps = { mat: new Map(), mail: new Map(), name: new Map(), tel: new Map(), custom: new Map(), sig: new Map() };
-      const compatible = (g, k) => {
-        if (customKey) return true;
-        if (g.k.mat && k.mat && g.k.mat !== k.mat) return false;
-        if (g.k.name && k.name && !nameSimilar(g.k.name, k.name)) return false;
-        return true;
-      };
+      const register = (g, k) => KINDS.forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], g));
       recs.forEach((r) => {
         const k = keysOf(r);
-        let target = null;
-        for (const kind of KINDS) {
-          if (!k[kind]) continue;
-          if (kind === 'name' && k.name.split(' ').length < 2) continue;
-          const g = maps[kind].get(k[kind]);
-          if (g && compatible(g, k)) {
-            target = g;
-            break;
+        const cands = [];
+        if (!noMerge.has(r.idx)) {
+          KINDS.forEach((kind) => {
+            if (!k[kind] || (kind === 'name' && k.name.split(' ').length < 2)) return;
+            const g = find(maps[kind].get(k[kind]));
+            if (g && !cands.some((c) => c.g === g) && compatible(g, k)) cands.push({ g, kind });
+          });
+          if (!cands.length && level === 'large' && !customKey && k.name && k.name.split(' ').length >= 2 && all.length <= 4000) {
+            const g = all.find((x) => !x.parent && x.k.name && x.k.name !== k.name && compatible(x, k) && nameSimilar(x.k.name, k.name, true));
+            if (g) cands.push({ g, kind: 'name~' });
           }
         }
+        let target = cands.length ? cands[0].g : null;
         let sig = null;
-        if (!target && !strongKey(k)) {
-          sig = cols.map((c) => signature(r.vals[c.id])).join('\u0001');
+        if (!target && !noMerge.has(r.idx) && !strongKey(k)) {
+          sig = cols.map((c) => looseSig(r.vals[c.id])).join('\u0001');
           target = maps.sig.get(sig) || null;
+          if (target) cands.push({ g: target, kind: 'sig' });
         }
         if (target) {
-          absorbed++;
-          absorb(target, r);
-          if (!target.k.mat) target.k.mat = k.mat;
-          if (!target.k.name) target.k.name = k.name;
-          KINDS.forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], target));
+          absorbVals(target, r.vals);
+          target.sources.add(r.source);
+          target.n++;
+          target.idx.push(r.idx);
+          cands.forEach((c) => target.by.add(c.kind));
+          ['mat', 'name', 'dob'].forEach((x) => { if (!target.k[x]) target.k[x] = k[x]; });
+          cands.slice(1).forEach((c) => {
+            if (c.g !== target && c.kind !== 'sig' && compatible(target, c.g.k) && compatible(c.g, target.k)) mergeGroups(target, c.g);
+          });
+          register(target, k);
         } else {
-          const g = { vals: Object.assign({}, r.vals), sources: new Set([r.source]), conflicts: {}, n: 1, k };
-          groups.push(g);
-          KINDS.forEach((kind) => k[kind] && !maps[kind].has(k[kind]) && maps[kind].set(k[kind], g));
+          const g = newGroup(r, k);
+          all.push(g);
+          register(g, k);
           if (sig !== null) maps.sig.set(sig, g);
         }
       });
     } else {
-      groups = recs.map((r) => ({ vals: r.vals, sources: new Set([r.source]), conflicts: {}, n: 1 }));
+      recs.forEach((r) => all.push(newGroup(r, {})));
+    }
+    let groups = all.filter((g) => !g.parent);
+
+    if (policy === 'majority') {
+      groups.forEach((g) => {
+        for (const id in g.counts) {
+          const entries = Array.from(g.counts[id].values());
+          if (entries.length < 2) continue;
+          const curKey = looseSig(g.vals[id]);
+          let best = g.counts[id].get(curKey) || entries[0];
+          entries.forEach((e) => { if (e.n > best.n) best = e; });
+          g.vals[id] = best.v;
+          const others = new Set();
+          entries.forEach((e) => { if (e !== best) others.add(e.v instanceof Date ? fmtD(e.v) : String(e.v)); });
+          if (others.size) g.conflicts[id] = others;
+          else delete g.conflicts[id];
+        }
+      });
     }
 
     let emptyDropped = 0;
@@ -962,14 +1207,15 @@
     // Tri (principal + secondaire)
     let keys = [];
     const resolve = (id) => (id && id !== 'none' && id !== 'auto' ? cols.find((x) => x.id === (into.get(id) || id)) : null);
+    const dir1 = st.sortDir === 'desc' ? -1 : 1;
     if (st.sortBy === 'auto') {
       const g = (id) => cols.find((c) => c.group === id);
-      if (g('nom')) keys = [g('nom'), g('prenom')].filter(Boolean).map((c) => ({ c, dir: st.sortDir === 'desc' ? -1 : 1 }));
-      else if (g('nomcomplet')) keys = [{ c: g('nomcomplet'), dir: st.sortDir === 'desc' ? -1 : 1 }];
-      else if (g('matricule')) keys = [{ c: g('matricule'), dir: st.sortDir === 'desc' ? -1 : 1 }];
+      if (g('nom')) keys = [g('nom'), g('prenom')].filter(Boolean).map((c) => ({ c, dir: dir1 }));
+      else if (g('nomcomplet')) keys = [{ c: g('nomcomplet'), dir: dir1 }];
+      else if (g('matricule')) keys = [{ c: g('matricule'), dir: dir1 }];
     } else if (st.sortBy && st.sortBy !== 'none') {
       const c = resolve(st.sortBy);
-      if (c) keys.push({ c, dir: st.sortDir === 'desc' ? -1 : 1 });
+      if (c) keys.push({ c, dir: dir1 });
       const c2 = resolve(st.sortBy2);
       if (c2 && (!c || c2.id !== c.id)) keys.push({ c: c2, dir: st.sortDir2 === 'desc' ? -1 : 1 });
     }
@@ -996,6 +1242,7 @@
     if (st.source) headers.push('Fichier source');
 
     const conflictMap = {};
+    const merges = [];
     let conflictCount = 0;
     const rows = groups.map((g, ri) => {
       const out = [];
@@ -1009,11 +1256,16 @@
         }
       });
       if (st.source) out.push(Array.from(g.sources).join(' + '));
+      if (g.n > 1) {
+        const nm = [first(g, nomIds), first(g, preIds)].filter((x) => x !== undefined).join(' ');
+        const label = nm || first(g, fullIds) || first(g, mailIds) || first(g, matIds) || 'Ligne ' + (ri + 1);
+        merges.push({ r: ri, label: String(label), sources: Array.from(g.sources), by: Array.from(g.by).map((x) => BY_LABEL[x] || x), idx: g.idx.slice() });
+      }
       return out;
     });
 
     const headMeta = (st.numbering ? [{ variants: [], merged: false, group: 'index' }] : [])
-      .concat(cols.map((c) => ({ variants: c.meta.variants, merged: c.meta.variants.length > 1 && !c.meta.reasons.includes('déduit'), low: c.meta.low, group: c.group, type: c.meta.type })))
+      .concat(cols.map((c) => ({ id: c.id, variants: c.meta.variants, merged: c.meta.variants.length > 1 && !c.meta.reasons.includes('déduit'), low: c.meta.low, group: c.group, type: c.meta.type })))
       .concat(st.source ? [{ variants: [], merged: false, group: 'source' }] : []);
 
     return {
@@ -1022,13 +1274,14 @@
       headMeta,
       conflictMap,
       conflictCount,
-      absorbed,
+      merges,
+      absorbed: recs.length - groups.length,
       emptyDropped,
-      combinedRows: groups.filter((g) => g.n > 1).length,
+      combinedRows: merges.length,
       sortedBy: keys.map((k) => k.c.label),
       columnCount: cols.length,
     };
   }
 
-  return { analyze, build, dateToText, tokens, resolveGroup, readSheet, splitName, parseDateText, formatPhone, EMAIL_RE, phoneDigits };
+  return { analyze, build, dateToText, tokens, resolveGroup, readSheet, splitName, parseDateText, formatPhone, EMAIL_RE, phoneDigits, detectForm };
 });

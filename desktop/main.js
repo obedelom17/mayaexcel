@@ -32,8 +32,9 @@ async function createWindow() {
   const win = new BrowserWindow({
     width: 1200, height: 860, minWidth: 420, minHeight: 600,
     title: 'MayaExcel', icon: path.join(__dirname, 'icon.png'),
-    autoHideMenuBar: true, backgroundColor: '#ffffff',
+    autoHideMenuBar: true, backgroundColor: '#ffffff', show: false,
   });
+  win.once('ready-to-show', () => { win.maximize(); win.show(); });
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: 'deny' }; });
   win.loadURL('http://127.0.0.1:' + port + '/');
 }
