@@ -1,6 +1,6 @@
 {
   "name": "mayaexcel-desktop",
-  "version": "4.0.0",
+  "version": "5.0.0",
   "description": "MayaExcel \u2013 fusion intelligente de fichiers Excel",
   "author": "MayaExcel",
   "main": "main.js",

@@ -90,6 +90,13 @@
       <symbol id="i-reset" viewBox="0 0 24 24"><path d="M4 12a8 8 0 1 0 2.6-5.9L4 8.5"/><path d="M4 4v4.5h4.5"/></symbol>
       <symbol id="i-link" viewBox="0 0 24 24"><path d="M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7l-1 1"/><path d="M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1"/></symbol>
       <symbol id="i-split" viewBox="0 0 24 24"><path d="M12 4v6M12 14v6M4 12h5M15 12h5"/></symbol>
+      <symbol id="i-home" viewBox="0 0 24 24"><path d="M4 11l8-6.5 8 6.5"/><path d="M6 10v9.5h12V10"/><path d="M10 19.5v-5h4v5"/></symbol>
+      <symbol id="i-layers" viewBox="0 0 24 24"><path d="M12 4l8.5 4.5L12 13 3.5 8.5z"/><path d="M3.5 12.5L12 17l8.5-4.5"/><path d="M3.5 16.5L12 21l8.5-4.5"/></symbol>
+      <symbol id="i-clock" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M12 7.5V12l3 2"/></symbol>
+      <symbol id="i-help" viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M9.6 9.5a2.5 2.5 0 1 1 3.6 2.2c-.8.4-1.2 1-1.2 1.8M12 16.8h.01"/></symbol>
+      <symbol id="i-trash" viewBox="0 0 24 24"><path d="M5 7h14M10 7V5h4v2M7 7l.8 12h8.4L17 7"/></symbol>
+      <symbol id="i-save" viewBox="0 0 24 24"><path d="M5 4.5h11l3 3V19.5H5z"/><path d="M8.5 4.5v5h6v-5M8.5 19.5v-6h7v6"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M12 3.5v2.2M12 18.3v2.2M20.5 12h-2.2M5.7 12H3.5M18 6l-1.6 1.6M7.6 16.4L6 18M18 18l-1.6-1.6M7.6 7.6L6 6"/></symbol>
     </defs>
   </svg>
 
@@ -101,9 +108,15 @@
       <span class="brand-name">MayaExcel</span>
     </a>
 
+    <ol class="stepper" id="stepper" aria-label="Progression">
+      <li data-step="1" aria-current="step"><span class="n">1</span>Sources</li>
+      <li data-step="2"><span class="n">2</span>Vérification</li>
+      <li data-step="3"><span class="n">3</span>Export</li>
+    </ol>
+
     <div class="appbar-actions">
-      <button type="button" class="btn" id="addBtn" title="Ajouter des fichiers (Ctrl + O)"><svg class="ic"><use href="#i-plus"/></svg><span class="lbl">Ajouter</span></button>
-      <button type="button" class="btn" id="pasteBtn" title="Coller un tableau copié depuis Excel (Ctrl + V)"><svg class="ic"><use href="#i-paste"/></svg><span class="lbl">Coller</span></button>
+      <button type="button" class="btn js-pick" id="addBtn" title="Ajouter des fichiers (Ctrl + O)"><svg class="ic"><use href="#i-plus"/></svg><span class="lbl">Ajouter</span></button>
+      <button type="button" class="btn js-paste" id="pasteBtn" title="Coller un tableau copié depuis Excel (Ctrl + V)"><svg class="ic"><use href="#i-paste"/></svg><span class="lbl">Coller</span></button>
       <span class="vsep" aria-hidden="true"></span>
       <div class="split" id="exportSplit">
         <button type="button" class="btn btn-primary" id="dlBtn" disabled title="Exporter (Ctrl + S)"><svg class="ic"><use href="#i-download"/></svg><span class="lbl" id="dlLabel">Exporter</span></button>
@@ -116,84 +129,138 @@
     </div>
   </header>
 
-  <div class="appbody" id="appbody" data-state="empty">
-    <main class="empty" id="empty" aria-labelledby="emptyTitle">
-      <div class="empty-inner" id="drop">
-        <svg class="empty-art" viewBox="0 0 220 96" aria-hidden="true">
-          <g class="a-sheet"><rect x="4" y="6" width="58" height="24" rx="3"/><path d="M4 14h58M22 6v24"/></g>
-          <g class="a-sheet"><rect x="14" y="36" width="58" height="24" rx="3"/><path d="M14 44h58M32 36v24"/></g>
-          <g class="a-sheet"><rect x="4" y="66" width="58" height="24" rx="3"/><path d="M4 74h58M22 66v24"/></g>
-          <path class="a-arrow" d="M80 18c22 0 28 22 48 30M84 48h44M80 78c22 0 28-22 48-30"/>
-          <path class="a-arrow" d="M122 43l8 5-8 5"/>
-          <g class="a-sheet a-big"><rect x="138" y="8" width="78" height="80" rx="3"/><path d="M138 24h78M138 40h78M138 56h78M138 72h78M164 8v80M190 8v80"/><rect class="a-mark" x="139" y="41" width="76" height="14"/></g>
-        </svg>
-        <h1 id="emptyTitle" class="empty-title">Fusionner des fichiers Excel</h1>
-        <p class="empty-text">Ajoutez les fichiers à regrouper. MayaExcel rapproche les colonnes, repère les personnes présentes dans plusieurs fichiers et produit un tableau unique.</p>
-        <div class="empty-actions">
-          <button type="button" class="btn btn-primary btn-lg" id="pickBtn"><svg class="ic"><use href="#i-upload"/></svg>Choisir des fichiers</button>
-          <button type="button" class="btn btn-lg" id="demoBtn">Charger un exemple</button>
+  <div class="shell">
+    <nav class="rail" id="rail" aria-label="Navigation principale">
+      <button type="button" data-rail="home" aria-current="page"><svg class="ic"><use href="#i-home"/></svg><span>Fusion</span></button>
+      <button type="button" data-sec="templates"><svg class="ic"><use href="#i-layers"/></svg><span>Modèles</span></button>
+      <button type="button" data-sec="history"><svg class="ic"><use href="#i-clock"/></svg><span>Historique</span></button>
+      <button type="button" data-sec="help"><svg class="ic"><use href="#i-help"/></svg><span>Aide</span></button>
+      <span class="rail-grow"></span>
+      <button type="button" data-sec="fusion"><svg class="ic"><use href="#i-settings"/></svg><span>Réglages</span></button>
+    </nav>
+
+    <div class="appbody" id="appbody" data-state="empty">
+      <main class="home" id="empty" aria-labelledby="homeTitle">
+        <div class="home-inner">
+          <div class="home-head">
+            <div>
+              <h1 id="homeTitle">Nouvelle fusion</h1>
+              <p>Rassemblez les fichiers de votre équipe en un tableau unique, contrôlé et prêt à exporter.</p>
+            </div>
+            <button type="button" class="btn js-demo">Charger un exemple</button>
+          </div>
+
+          <div class="home-grid">
+            <div class="home-main">
+              <section class="dropzone" id="drop" aria-label="Zone de dépôt des fichiers">
+                <svg class="drop-art" viewBox="0 0 220 96" aria-hidden="true">
+                  <g class="a-sheet"><rect x="4" y="6" width="58" height="24" rx="3"/><path d="M4 14h58M22 6v24"/></g>
+                  <g class="a-sheet"><rect x="14" y="36" width="58" height="24" rx="3"/><path d="M14 44h58M32 36v24"/></g>
+                  <g class="a-sheet"><rect x="4" y="66" width="58" height="24" rx="3"/><path d="M4 74h58M22 66v24"/></g>
+                  <path class="a-arrow" d="M80 18c22 0 28 22 48 30M84 48h44M80 78c22 0 28-22 48-30"/>
+                  <path class="a-arrow" d="M122 43l8 5-8 5"/>
+                  <g class="a-sheet a-big"><rect x="138" y="8" width="78" height="80" rx="3"/><path d="M138 24h78M138 40h78M138 56h78M138 72h78M164 8v80M190 8v80"/><rect class="a-mark" x="139" y="41" width="76" height="14"/></g>
+                </svg>
+                <div class="drop-copy">
+                  <h2>Déposez vos fichiers ici</h2>
+                  <p>Glissez les fichiers à fusionner, ou parcourez votre appareil. Vous pouvez aussi coller un tableau copié depuis Excel.</p>
+                  <div class="drop-actions">
+                    <button type="button" class="btn btn-primary btn-lg js-pick"><svg class="ic"><use href="#i-upload"/></svg>Choisir des fichiers</button>
+                    <button type="button" class="btn btn-lg js-paste"><svg class="ic"><use href="#i-paste"/></svg>Coller un tableau</button>
+                  </div>
+                  <p class="drop-note">.xlsx · .xls · .csv · .ods &nbsp;|&nbsp; traitement local, aucun envoi sur Internet</p>
+                </div>
+              </section>
+
+              <section class="card" aria-labelledby="presetTitle">
+                <header class="card-head"><h2 id="presetTitle">Type de fusion</h2><span class="card-sub" id="presetSub"></span></header>
+                <div class="presets" id="homePresets" role="radiogroup" aria-labelledby="presetTitle"></div>
+              </section>
+            </div>
+
+            <div class="home-side">
+              <section class="card" aria-labelledby="tplTitle">
+                <header class="card-head"><h2 id="tplTitle">Modèles</h2><button type="button" class="link" data-sec="templates">Gérer</button></header>
+                <div id="homeTemplates"></div>
+              </section>
+              <section class="card" aria-labelledby="histTitle">
+                <header class="card-head"><h2 id="histTitle">Activité récente</h2><button type="button" class="link" data-sec="history">Tout voir</button></header>
+                <div id="homeHistory"></div>
+              </section>
+              <section class="card" aria-labelledby="specTitle">
+                <header class="card-head"><h2 id="specTitle">Fonctionnement</h2><button type="button" class="link" data-sec="help">Aide</button></header>
+                <dl class="spec">
+                  <div><dt>Lecture</dt><dd>Titres détectés, fiches individuelles, fichiers sans titres.</dd></div>
+                  <div><dt>Colonnes</dt><dd>Synonymes, abréviations, contenu des cellules.</dd></div>
+                  <div><dt>Personnes</dt><dd>Matricule, e-mail, téléphone, nom, date de naissance.</dd></div>
+                  <div><dt>Données</dt><dd>Dates, téléphones, majuscules, libellés unifiés.</dd></div>
+                  <div><dt>Export</dt><dd>Excel, CSV, ODS, JSON, avec rapport de contrôle.</dd></div>
+                </dl>
+              </section>
+            </div>
+          </div>
         </div>
-        <p class="empty-note">Formats pris en charge : .xlsx, .xls, .csv, .ods. Vous pouvez aussi glisser les fichiers ici. Le traitement est entièrement local : aucun fichier n’est envoyé sur Internet.</p>
-      </div>
-    </main>
+      </main>
 
-    <aside class="side" id="side" aria-label="Sources" hidden>
-      <div class="pane-head">
-        <h2 class="pane-title">Sources <span class="count" id="filesCount"></span></h2>
-        <button type="button" class="btn btn-ghost btn-sm" id="clearBtn">Tout retirer</button>
-      </div>
-      <p class="pane-hint" id="filesHint" hidden>L’ordre des sources compte : en cas de valeurs différentes, la source placée en premier est prioritaire.</p>
-      <ul class="files" id="filesList"></ul>
-    </aside>
-
-    <section class="work" id="work" aria-label="Résultat" hidden>
-      <div class="summarybar">
-        <p class="summary" id="summary"></p>
-        <ul class="tags" id="insights"></ul>
-      </div>
-
-      <div class="toolbar" id="toolbar">
-        <label class="search" for="searchInput">
-          <svg class="ic"><use href="#i-search"/></svg>
-          <input type="search" id="searchInput" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher dans le tableau">
-        </label>
-        <div class="sorter">
-          <label for="sortBy">Tri</label>
-          <select id="sortBy"></select>
-          <button type="button" class="btn btn-sm" id="sortDir" aria-label="Sens du tri"></button>
+      <aside class="side" id="side" aria-label="Sources" hidden>
+        <div class="pane-head">
+          <h2 class="pane-title">Sources <span class="count" id="filesCount"></span></h2>
+          <button type="button" class="btn btn-ghost btn-sm" id="clearBtn">Tout retirer</button>
         </div>
-        <button type="button" class="btn btn-sm" id="toolbarSettings"><svg class="ic"><use href="#i-sliders"/></svg><span class="lbl">Réglages de fusion</span></button>
-      </div>
+        <p class="pane-hint" id="filesHint" hidden>L’ordre des sources compte : en cas de valeurs différentes, la source placée en premier est prioritaire.</p>
+        <ul class="files" id="filesList"></ul>
+      </aside>
 
-      <div class="tabs" role="tablist" aria-label="Affichage du résultat">
-        <button type="button" role="tab" class="tab" id="tabTable" data-tab="table" aria-selected="true" aria-controls="panelTable">Tableau</button>
-        <button type="button" role="tab" class="tab" id="tabCols" data-tab="cols" aria-selected="false" aria-controls="panelCols" tabindex="-1">Colonnes</button>
-        <button type="button" role="tab" class="tab" id="tabCheck" data-tab="check" aria-selected="false" aria-controls="panelCheck" tabindex="-1">Contrôle<span class="tab-count" id="checkCount" hidden></span></button>
-      </div>
-
-      <div class="panels">
-        <div class="panel panel-table" id="panelTable" role="tabpanel" aria-labelledby="tabTable">
-          <div class="fbar"><span class="fb-ref" id="fbRef">—</span><span class="fb-val" id="fbVal">Sélectionnez une cellule</span></div>
-          <div class="sheet" id="sheet" tabindex="0" aria-label="Tableau fusionné"></div>
-          <p class="table-note" id="sheetNote" hidden></p>
+      <section class="work" id="work" aria-label="Résultat" hidden>
+        <div class="summarybar">
+          <div class="kpis" id="kpis"></div>
+          <ul class="tags" id="insights"></ul>
         </div>
-        <div class="panel panel-scroll" id="panelCols" role="tabpanel" aria-labelledby="tabCols" hidden>
-          <p class="panel-hint">Voici comment MayaExcel a interprété les colonnes. Renommez, masquez ou déplacez-les. Si deux colonnes ont été regroupées à tort, utilisez « Séparer » sur l’intitulé ; à l’inverse, « Rattacher à » les rassemble.</p>
-          <ol class="cols-list" id="colsList"></ol>
-        </div>
-        <div class="panel panel-scroll" id="panelCheck" role="tabpanel" aria-labelledby="tabCheck" hidden></div>
-        <p class="work-empty" id="workEmpty" hidden>Aucune donnée exploitable. Cochez au moins une source lisible.</p>
-      </div>
 
-      <footer class="statusbar" id="statusbar">
-        <span id="stRows">—</span>
-        <span id="stCols"></span>
-        <span id="stSort"></span>
-        <span class="st-grow"></span>
-        <span id="stNote">Traitement local</span>
-      </footer>
-    </section>
+        <div class="toolbar" id="toolbar">
+          <label class="search" for="searchInput">
+            <svg class="ic"><use href="#i-search"/></svg>
+            <input type="search" id="searchInput" placeholder="Rechercher" autocomplete="off" aria-label="Rechercher dans le tableau">
+          </label>
+          <div class="sorter">
+            <label for="sortBy">Tri</label>
+            <select id="sortBy"></select>
+            <button type="button" class="btn btn-sm" id="sortDir" aria-label="Sens du tri"></button>
+          </div>
+          <button type="button" class="btn btn-sm" id="toolbarSettings"><svg class="ic"><use href="#i-sliders"/></svg><span class="lbl">Réglages de fusion</span></button>
+        </div>
+
+        <div class="tabs" role="tablist" aria-label="Affichage du résultat">
+          <button type="button" role="tab" class="tab" id="tabTable" data-tab="table" aria-selected="true" aria-controls="panelTable">Tableau</button>
+          <button type="button" role="tab" class="tab" id="tabCols" data-tab="cols" aria-selected="false" aria-controls="panelCols" tabindex="-1">Colonnes</button>
+          <button type="button" role="tab" class="tab" id="tabCheck" data-tab="check" aria-selected="false" aria-controls="panelCheck" tabindex="-1">Contrôle<span class="tab-count" id="checkCount" hidden></span></button>
+        </div>
+
+        <div class="panels">
+          <div class="panel panel-table" id="panelTable" role="tabpanel" aria-labelledby="tabTable">
+            <div class="fbar"><span class="fb-ref" id="fbRef">—</span><span class="fb-val" id="fbVal">Sélectionnez une cellule</span></div>
+            <div class="sheet" id="sheet" tabindex="0" aria-label="Tableau fusionné"></div>
+            <p class="table-note" id="sheetNote" hidden></p>
+          </div>
+          <div class="panel panel-scroll" id="panelCols" role="tabpanel" aria-labelledby="tabCols" hidden>
+            <p class="panel-hint">Voici comment MayaExcel a interprété les colonnes. Renommez, masquez ou déplacez-les. Si deux colonnes ont été regroupées à tort, utilisez « Séparer » sur l’intitulé ; à l’inverse, « Rattacher à » les rassemble.</p>
+            <ol class="cols-list" id="colsList"></ol>
+          </div>
+          <div class="panel panel-scroll" id="panelCheck" role="tabpanel" aria-labelledby="tabCheck" hidden></div>
+          <p class="work-empty" id="workEmpty" hidden>Aucune donnée exploitable. Cochez au moins une source lisible.</p>
+        </div>
+      </section>
+    </div>
   </div>
+
+  <footer class="statusbar" id="statusbar">
+    <span id="stRows">Aucune source</span>
+    <span id="stCols"></span>
+    <span id="stSort"></span>
+    <span class="st-grow"></span>
+    <span id="stNote">Traitement local · aucun envoi sur Internet</span>
+    <span class="st-ver" id="stVer"></span>
+  </footer>
 
   <nav class="mobilenav" id="mobilenav" aria-label="Navigation" hidden>
     <button type="button" data-nav="sources"><svg class="ic"><use href="#i-files"/></svg><span>Sources</span></button>
@@ -203,6 +270,7 @@
   </nav>
 
   <input type="file" id="fileInput" multiple accept=".xlsx,.xlsm,.xls,.csv,.ods,.tsv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/vnd.ms-excel,text/csv" hidden>
+  <input type="file" id="tplFile" accept=".json,application/json" hidden>
 
   <dialog id="settingsDlg" class="drawer" aria-labelledby="settingsTitle">
     <div class="dlg-head">

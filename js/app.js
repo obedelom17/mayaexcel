@@ -114,6 +114,7 @@
     tab: 'table',
     query: '',
     extraRows: 0,
+    exported: false,
   };
   let uid = 0;
   const MAX_DOM_ROWS = 5000;
@@ -409,6 +410,8 @@
     if (!state.analysis) return;
     state.built = MayaMerge.build(state.analysis, buildSettings());
     state.quality = computeQuality();
+    state.exported = false;
+    renderStepper();
     if (full) renderAll();
     else {
       renderSummary();
@@ -483,7 +486,28 @@
     renderFiles();
     renderWork();
     renderActions();
+    renderStepper();
+    renderStatus();
+    renderHome();
     updateBadge();
+  }
+
+  function renderStepper() {
+    const step = state.exported ? 3 : state.analysis ? 2 : 1;
+    $$('#stepper li').forEach((li) => {
+      const n = Number(li.dataset.step);
+      li.classList.toggle('done', n < step);
+      if (n === step) li.setAttribute('aria-current', 'step');
+      else li.removeAttribute('aria-current');
+    });
+  }
+
+  function renderStatus() {
+    const b = state.built;
+    $('#stRows').textContent = b ? plural(b.rows.length, 'ligne', 'lignes') : 'Aucune source';
+    $('#stCols').textContent = b ? plural(b.columnCount, 'colonne', 'colonnes') : '';
+    $('#stSort').textContent = b ? (b.sortedBy.length ? 'Tri : ' + b.sortedBy.join(', ') : 'Ordre des sources') : '';
+    $('#stVer').textContent = 'v' + ((window.MAYA_CONFIG && window.MAYA_CONFIG.version) || '');
   }
 
   function renderLayout() {
@@ -557,7 +581,6 @@
     $('#toolbar').hidden = !has;
     $('.tabs').hidden = !has;
     $('.summarybar').hidden = !has;
-    $('#statusbar').hidden = !has;
     if (!has) return;
     renderToolbar();
     renderSummary();
@@ -570,29 +593,33 @@
 
   const num = (n) => '<span>' + n + '</span>';
 
+  function kpi(label, value, sub, tone) {
+    return '<div class="kpi' + (tone ? ' ' + tone : '') + '"><span class="kpi-label">' + esc(label) + '</span><span class="kpi-value">' + value + '</span><span class="kpi-sub">' + esc(sub) + '</span></div>';
+  }
+
   function renderSummary() {
     const a = state.analysis;
     const b = state.built;
     if (!a || !b) return;
-    const w = (n, one, many) => (n > 1 ? many : one);
-    $('#summary').innerHTML = num(a.fileCount) + ' ' + w(a.fileCount, 'source', 'sources') + ' · ' + num(b.rows.length) + ' ' + w(b.rows.length, 'ligne', 'lignes') + ' · ' + num(b.columnCount) + ' ' + w(b.columnCount, 'colonne', 'colonnes');
+    const read = a.report.reduce((n, r) => n + r.rows, 0);
+    const issues = state.quality ? state.quality.issues.length : 0;
+    $('#kpis').innerHTML =
+      kpi('Sources', a.fileCount, plural(read, 'ligne lue', 'lignes lues')) +
+      kpi('Lignes', b.rows.length, b.absorbed ? plural(b.absorbed, 'ligne rapprochée', 'lignes rapprochées') : 'aucun regroupement') +
+      kpi('Colonnes', b.columnCount, plural(a.columns.length, 'détectée', 'détectées')) +
+      kpi('Personnes regroupées', b.combinedRows, b.combinedRows ? 'présentes dans plusieurs sources' : 'aucune') +
+      kpi('À vérifier', issues, plural(b.conflictCount, 'valeur différente', 'valeurs différentes'), issues ? 'warn' : '');
 
     const tags = [];
     if (a.mergedColumns) tags.push(['', plural(a.mergedColumns, 'colonne regroupée', 'colonnes regroupées')]);
     if (a.contentColumns) tags.push(['', plural(a.contentColumns, 'colonne reconnue par son contenu', 'colonnes reconnues par leur contenu')]);
     if (a.headerlessSheets) tags.push(['', plural(a.headerlessSheets, 'feuille sans en-têtes', 'feuilles sans en-têtes')]);
-    const forms = a.report.reduce((n, r) => n + r.sheets.filter((s) => s.form).length, 0);
+    const forms = a.report.reduce((n, r) => n + r.sheets.filter((x) => x.form).length, 0);
     if (forms) tags.push(['', plural(forms, 'fiche individuelle', 'fiches individuelles')]);
     if (a.splitCount && S.splitNames) tags.push(['', plural(a.splitCount, 'nom complet séparé', 'noms complets séparés')]);
-    if (b.combinedRows) tags.push(['', plural(b.combinedRows, 'personne présente dans plusieurs sources', 'personnes présentes dans plusieurs sources')]);
-    else if (b.absorbed) tags.push(['', plural(b.absorbed, 'doublon retiré', 'doublons retirés')]);
     if (b.emptyDropped) tags.push(['', plural(b.emptyDropped, 'colonne vide masquée', 'colonnes vides masquées')]);
-    if (b.conflictCount) tags.push(['warn', plural(b.conflictCount, 'valeur à vérifier', 'valeurs à vérifier')]);
     $('#insights').innerHTML = tags.map(([c, t]) => '<li class="' + c + '">' + esc(t) + '</li>').join('');
-
-    $('#stRows').textContent = plural(b.rows.length, 'ligne', 'lignes');
-    $('#stCols').textContent = plural(b.columnCount, 'colonne', 'colonnes');
-    $('#stSort').textContent = b.sortedBy.length ? 'Tri : ' + b.sortedBy.join(', ') : 'Ordre des sources';
+    renderStatus();
   }
 
   function autoSortLabel() {
@@ -1120,6 +1147,9 @@
       const { blob, name } = await makeExport(fmt || S.format);
       await download(blob, name);
       toast('Fichier exporté : ' + name);
+      state.exported = true;
+      renderStepper();
+      addHistory(name, fmt || S.format);
     } catch (e) {
       console.error(e);
       toast('Impossible de créer le fichier. Vérifiez votre connexion Internet et réessayez.', true);
@@ -1194,7 +1224,7 @@
   /*  Réglages                                                           */
   /* ================================================================== */
 
-  const SECTION_ORDER = ['fusion', 'data', 'table', 'export', 'look', 'app'];
+  const SECTION_ORDER = ['fusion', 'data', 'table', 'export', 'look', 'templates', 'history', 'help', 'app'];
   let settingsSection = 'fusion';
 
   function colOptions(withAuto, noneLabel) {
@@ -1208,6 +1238,7 @@
   function schema() {
     return {
       fusion: { title: 'Fusion', items: [
+        { t: 'html', html: presetSelectHtml },
         { t: 'group', l: 'Lecture des sources' },
         { k: 'allSheets', t: 'switch', l: 'Lire toutes les feuilles', h: 'Sinon, seule la première feuille de chaque fichier est lue.', a: 'analyze' },
         { k: 'formDetect', t: 'switch', l: 'Lire les fiches individuelles', h: 'Feuilles de la forme « Nom : … », « Téléphone : … » : une fiche devient une ligne.', a: 'analyze' },
@@ -1274,6 +1305,9 @@
         { k: 'fontScale', t: 'seg', l: 'Taille du texte', a: 'ui', num: true, o: [{ v: 90, l: 'Petit' }, { v: 100, l: 'Normal' }, { v: 115, l: 'Grand' }, { v: 130, l: 'Très grand' }] },
         { k: 'motion', t: 'seg', l: 'Animations', a: 'ui', o: [{ v: 'system', l: 'Système' }, { v: 'on', l: 'Activées' }, { v: 'off', l: 'Réduites' }] },
       ] },
+      templates: { title: 'Modèles', items: [{ t: 'html', html: templatesSectionHtml }] },
+      history: { title: 'Historique', items: [{ t: 'html', html: historySectionHtml }] },
+      help: { title: 'Aide', items: [{ t: 'html', html: helpSectionHtml }] },
       app: { title: 'Application', items: [{ t: 'html', html: appSectionHtml }] },
     };
   }
@@ -1351,6 +1385,202 @@
     const d = $('#settingsDlg');
     if (!d.open) d.showModal();
   }
+
+  /* ================================================================== */
+  /*  Types de fusion, modèles, historique                               */
+  /* ================================================================== */
+
+  const PRESET_KEYS = ['allSheets', 'formDetect', 'multiHeader', 'nullTokens', 'headerMode', 'headerRow', 'sensitivity', 'contentMatch', 'splitNames', 'combine', 'personMatch', 'fuzzyNames', 'useBirth', 'keyCol', 'conflict', 'ignoreColumns', 'synonyms', 'clean', 'nomCase', 'prenomCase', 'emailLower', 'sexNorm', 'normCats', 'placeCase', 'unifyLabels', 'phoneFormat', 'phoneCC', 'dropEmptyCols', 'numbering', 'source', 'sortBy', 'sortDir', 'sortBy2', 'sortDir2'];
+  const TEMPLATE_KEYS = PRESET_KEYS.concat(['dateFormat', 'emptyText', 'previewRows', 'format', 'fileName', 'zebra', 'freeze', 'autofilter', 'headerColor', 'reportSheet', 'csvSafe']);
+  const PRESETS = [
+    { id: 'personnes', name: 'Personnes et effectifs', desc: 'Une ligne par personne : doublons entre sources regroupés, Nom et Prénom séparés, données harmonisées.', set: {} },
+    { id: 'chiffres', name: 'Chiffres et comptabilité', desc: 'Toutes les lignes sont empilées telles quelles, avec la source de chaque ligne.', set: { combine: false, clean: false, splitNames: false, sortBy: 'none', source: true } },
+    { id: 'listes', name: 'Listes et inventaires', desc: 'Les lignes qui partagent un identifiant sont regroupées ; la dernière source l’emporte en cas de désaccord.', set: { personMatch: 'strict', conflict: 'last', clean: false, splitNames: false } },
+    { id: 'empiler', name: 'Empilement simple', desc: 'Aucun regroupement ni nettoyage : toutes les lignes sont conservées dans l’ordre des sources.', set: { combine: false, clean: false, unifyLabels: false, splitNames: false, contentMatch: false, sortBy: 'none', source: true } },
+    { id: 'strict', name: 'Contrôle strict', desc: 'Rapprochements prudents : intitulés quasi identiques, personnes reconnues par identifiant uniquement.', set: { sensitivity: 'strict', personMatch: 'strict', fuzzyNames: false, unifyLabels: false } },
+  ];
+  const presetValues = (p) => Object.fromEntries(PRESET_KEYS.map((k) => [k, k in p.set ? p.set[k] : DEFAULTS[k]]));
+  const currentPresetId = () => {
+    const p = PRESETS.find((x) => { const v = presetValues(x); return PRESET_KEYS.every((k) => S[k] === v[k]); });
+    return p ? p.id : null;
+  };
+
+  const TPL_KEY = 'maya.templates.v1';
+  const HIST_KEY = 'maya.history.v1';
+  function readList(key) {
+    try { const v = JSON.parse(localStorage.getItem(key) || '[]'); return Array.isArray(v) ? v : []; } catch (e) { return []; }
+  }
+  function writeList(key, v) {
+    try { localStorage.setItem(key, JSON.stringify(v)); } catch (e) { /* ignoré */ }
+  }
+  const when = (ts) => new Date(ts).toLocaleString('fr-FR', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
+
+  function snapshot() {
+    const settings = {};
+    TEMPLATE_KEYS.forEach((k) => (settings[k] = S[k]));
+    return { settings, overrides: state.overrides, separate: state.separate.slice(), colOrder: state.colOrder.slice() };
+  }
+
+  function applySnapshot(snap) {
+    if (!snap || !snap.settings) return false;
+    TEMPLATE_KEYS.forEach((k) => {
+      S[k] = k in snap.settings && typeof snap.settings[k] === typeof DEFAULTS[k] ? snap.settings[k] : DEFAULTS[k];
+    });
+    state.overrides = snap.overrides && typeof snap.overrides === 'object' ? snap.overrides : {};
+    state.separate = Array.isArray(snap.separate) ? snap.separate : [];
+    state.colOrder = Array.isArray(snap.colOrder) ? snap.colOrder : [];
+    saveSettings();
+    if (state.analysis) recompute();
+    else renderAll();
+    return true;
+  }
+
+  function applyPreset(id) {
+    const p = PRESETS.find((x) => x.id === id);
+    if (!p) return;
+    const v = presetValues(p);
+    PRESET_KEYS.forEach((k) => (S[k] = v[k]));
+    saveSettings();
+    if (state.analysis) recompute();
+    else renderAll();
+    toast('Type de fusion : ' + p.name);
+  }
+
+  function saveTemplate(name) {
+    const n = String(name || '').trim();
+    if (!n) { toast('Donnez un nom au modèle.', true); return; }
+    const list = readList(TPL_KEY).filter((t) => t.name.toLowerCase() !== n.toLowerCase());
+    list.unshift({ id: 't' + Date.now(), name: n, created: Date.now(), snap: snapshot() });
+    writeList(TPL_KEY, list.slice(0, 30));
+    toast('Modèle « ' + n + ' » enregistré.');
+  }
+
+  function exportTemplate(t) {
+    const blob = new Blob([JSON.stringify({ app: 'MayaExcel', version: 1, name: t.name, snap: t.snap }, null, 2)], { type: 'application/json' });
+    download(blob, 'modele-' + t.name.replace(/[^\w\- ]+/g, '').trim().replace(/\s+/g, '-').toLowerCase() + '.mayaexcel.json');
+  }
+
+  async function importTemplate(file) {
+    try {
+      const o = JSON.parse(await file.text());
+      if (!o || !o.snap || !o.snap.settings) throw new Error('format');
+      const list = readList(TPL_KEY);
+      list.unshift({ id: 't' + Date.now(), name: String(o.name || file.name.replace(/\.json$/i, '')).slice(0, 80), created: Date.now(), snap: o.snap });
+      writeList(TPL_KEY, list.slice(0, 30));
+      toast('Modèle importé.');
+    } catch (e) {
+      toast('Ce fichier n’est pas un modèle MayaExcel valide.', true);
+    }
+  }
+
+  function addHistory(name, fmt) {
+    const b = state.built;
+    if (!b) return;
+    const list = readList(HIST_KEY);
+    list.unshift({
+      id: 'h' + Date.now(), t: Date.now(), name, fmt, rows: b.rows.length, cols: b.columnCount,
+      sources: state.analysis ? state.analysis.fileCount : 0, files: state.files.filter((f) => f.include !== false).map((f) => f.name).slice(0, 8), snap: snapshot(),
+    });
+    writeList(HIST_KEY, list.slice(0, 15));
+    renderHome();
+  }
+
+  function presetSelectHtml() {
+    const cur = currentPresetId();
+    return '<div class="setting stack" style="padding-top:14px"><label class="setting-label" for="presetSel">Type de fusion</label><select id="presetSel">' +
+      (cur ? '' : '<option value="">Personnalisé</option>') + PRESETS.map((p) => '<option value="' + p.id + '"' + (p.id === cur ? ' selected' : '') + '>' + esc(p.name) + '</option>').join('') +
+      '</select><p class="setting-hint">Applique un ensemble de réglages cohérent. Chaque réglage reste modifiable ensuite.</p></div>';
+  }
+
+  const EMPTY_LINE = (t) => '<p class="muted-note">' + esc(t) + '</p>';
+
+  function tplRows(compact) {
+    const list = readList(TPL_KEY);
+    if (!list.length) return EMPTY_LINE('Aucun modèle enregistré. Un modèle garde vos réglages et vos corrections de colonnes pour les réutiliser sur un prochain lot de fichiers.');
+    return '<ul class="rows">' + list.slice(0, compact ? 4 : 30).map((t) =>
+      '<li class="row-item"><div class="row-main"><b>' + esc(t.name) + '</b><small>Enregistré le ' + esc(when(t.created)) + '</small></div><div class="row-actions">' +
+      '<button type="button" class="btn btn-sm" data-tpl="apply" data-id="' + t.id + '">Appliquer</button>' +
+      (compact ? '' : '<button type="button" class="icon-btn" data-tpl="export" data-id="' + t.id + '" aria-label="Exporter le modèle ' + esc(t.name) + '" title="Exporter"><svg class="ic"><use href="#i-download"/></svg></button><button type="button" class="icon-btn" data-tpl="delete" data-id="' + t.id + '" aria-label="Supprimer le modèle ' + esc(t.name) + '" title="Supprimer"><svg class="ic"><use href="#i-trash"/></svg></button>') +
+      '</div></li>').join('') + '</ul>';
+  }
+
+  function histRows(compact) {
+    const list = readList(HIST_KEY);
+    if (!list.length) return EMPTY_LINE('Aucune fusion exportée pour le moment.');
+    return '<ul class="rows">' + list.slice(0, compact ? 4 : 15).map((h) =>
+      '<li class="row-item"><div class="row-main"><b title="' + esc(h.name) + '">' + esc(h.name) + '</b><small>' + esc(when(h.t)) + ' · ' + plural(h.rows, 'ligne', 'lignes') + ' · ' + plural(h.sources, 'source', 'sources') + '</small>' +
+      (compact ? '' : '<small>' + esc((h.files || []).join(', ')) + '</small>') + '</div><div class="row-actions"><button type="button" class="btn btn-sm" data-hist="' + h.id + '" title="Réappliquer les réglages de cette fusion">Réutiliser</button></div></li>').join('') + '</ul>';
+  }
+
+  function renderHome() {
+    const cur = currentPresetId();
+    $('#presetSub').textContent = cur ? '' : 'Réglages personnalisés';
+    $('#homePresets').innerHTML = PRESETS.map((p) =>
+      '<button type="button" role="radio" class="preset" data-preset="' + p.id + '" aria-checked="' + (p.id === cur) + '"><span class="preset-name">' + esc(p.name) + '<svg class="ic tick"><use href="#i-check"/></svg></span><span class="preset-desc">' + esc(p.desc) + '</span></button>').join('');
+    $('#homeTemplates').innerHTML = tplRows(true);
+    $('#homeHistory').innerHTML = histRows(true);
+  }
+
+  function templatesSectionHtml() {
+    return '<p class="setting-hint-wide" style="padding-top:12px">Un modèle mémorise tous les réglages de fusion et d’export, ainsi que vos corrections de colonnes (renommages, regroupements, ordre). Appliquez-le à un nouveau lot de fichiers pour obtenir le même résultat.</p>' +
+      '<p class="group-title">Enregistrer la configuration actuelle</p>' +
+      '<div class="inline-form"><input type="text" id="tplName" placeholder="Nom du modèle" maxlength="60" autocomplete="off"><button type="button" class="btn btn-primary" data-tpl="save"><svg class="ic"><use href="#i-save"/></svg>Enregistrer</button></div>' +
+      '<p class="group-title">Modèles enregistrés</p>' + tplRows(false) +
+      '<div style="margin-top:12px"><button type="button" class="btn" data-tpl="import"><svg class="ic"><use href="#i-upload"/></svg>Importer un modèle</button></div>';
+  }
+
+  function historySectionHtml() {
+    return '<p class="setting-hint-wide" style="padding-top:12px">Les 15 derniers exports, conservés sur cet appareil. « Réutiliser » réapplique les réglages de la fusion correspondante (les fichiers eux-mêmes ne sont jamais conservés).</p>' + histRows(false) +
+      (readList(HIST_KEY).length ? '<div style="margin-top:12px"><button type="button" class="btn btn-ghost" data-hist-clear="1">Vider l’historique</button></div>' : '');
+  }
+
+  function helpSectionHtml() {
+    return '<div class="help">' +
+      '<h3>Fusionner en trois étapes</h3><ol class="steps"><li><b>Sources</b> : ajoutez les fichiers (glisser-déposer, bouton Ajouter, ou collage d’un tableau copié dans Excel).</li><li><b>Vérification</b> : contrôlez le tableau, l’interprétation des colonnes (onglet Colonnes) et les anomalies (onglet Contrôle).</li><li><b>Export</b> : choisissez le format. Un rapport peut être joint au fichier Excel.</li></ol>' +
+      '<h3>Comment les colonnes sont rapprochées</h3><p>Par leur intitulé (synonymes, abréviations, accents, fautes de frappe), puis par leur contenu (e-mails, téléphones, sexe, listes de valeurs communes). Quand un rapprochement est incertain, la colonne porte une mention et vous pouvez la séparer ou la rattacher à la main.</p>' +
+      '<h3>Comment les personnes sont reconnues</h3><p>Par matricule, e-mail, téléphone puis nom (ordre inversé, accents et fautes tolérés). Deux personnes ayant le même nom mais des dates de naissance différentes restent distinctes. Chaque regroupement figure dans Contrôle et peut être dissocié.</p>' +
+      '<h3>Valeurs en conflit</h3><p>Quand deux sources donnent des valeurs différentes pour la même personne, une seule est retenue (réglable : première, dernière, plus complète, plus fréquente). La cellule est marquée d’un coin orange et la valeur écartée est consultable.</p>' +
+      '<h3>Fiches individuelles</h3><p>Une feuille de la forme « Nom : … », « Téléphone : … » est lue comme une seule ligne. Utile quand chaque personne envoie sa propre fiche.</p>' +
+      '<h3>Raccourcis</h3><p><span class="kbd">Ctrl</span> + <span class="kbd">O</span> ajouter · <span class="kbd">Ctrl</span> + <span class="kbd">S</span> exporter · <span class="kbd">Ctrl</span> + <span class="kbd">,</span> réglages · <span class="kbd">Ctrl</span> + <span class="kbd">V</span> coller · flèches et <span class="kbd">Ctrl</span> + <span class="kbd">C</span> dans le tableau.</p>' +
+      '<h3>Confidentialité</h3><p>Tout est traité sur votre appareil. Les fichiers ne sont ni envoyés ni conservés ; seuls vos réglages, modèles et le résumé de l’historique sont mémorisés localement.</p></div>';
+  }
+
+  document.addEventListener('click', (e) => {
+    const sec = e.target.closest('[data-sec]');
+    if (sec && !sec.closest('#settingsTabs')) { openSettings(sec.dataset.sec); return; }
+    const home = e.target.closest('[data-rail="home"]');
+    if (home) { if (state.files.length) { setTab('table'); setView('main'); } return; }
+    const pr = e.target.closest('[data-preset]');
+    if (pr) { applyPreset(pr.dataset.preset); return; }
+    const hc = e.target.closest('[data-hist-clear]');
+    if (hc) { writeList(HIST_KEY, []); renderHome(); if ($('#settingsDlg').open) renderSettings(); return; }
+    const h = e.target.closest('[data-hist]');
+    if (h) {
+      const entry = readList(HIST_KEY).find((x) => x.id === h.dataset.hist);
+      if (entry && applySnapshot(entry.snap)) { toast('Réglages de cette fusion réappliqués.'); if ($('#settingsDlg').open) $('#settingsDlg').close(); }
+      return;
+    }
+    const t = e.target.closest('[data-tpl]');
+    if (!t) return;
+    const act = t.dataset.tpl;
+    const list = readList(TPL_KEY);
+    const tpl = list.find((x) => x.id === t.dataset.id);
+    if (act === 'save') { saveTemplate($('#tplName') ? $('#tplName').value : ''); }
+    else if (act === 'apply' && tpl) { if (applySnapshot(tpl.snap)) { toast('Modèle « ' + tpl.name + ' » appliqué.'); if ($('#settingsDlg').open) $('#settingsDlg').close(); } return; }
+    else if (act === 'export' && tpl) { exportTemplate(tpl); return; }
+    else if (act === 'delete' && tpl) { writeList(TPL_KEY, list.filter((x) => x.id !== tpl.id)); toast('Modèle supprimé.'); }
+    else if (act === 'import') { $('#tplFile').click(); return; }
+    renderHome();
+    if ($('#settingsDlg').open) renderSettings();
+  });
+  $('#tplFile').addEventListener('change', async (e) => {
+    const f = e.target.files[0];
+    e.target.value = '';
+    if (!f) return;
+    await importTemplate(f);
+    renderHome();
+    if ($('#settingsDlg').open) renderSettings();
+  });
 
   /* ================================================================== */
   /*  Application Android / Windows                                      */
@@ -1436,10 +1666,10 @@
   const fileInput = $('#fileInput');
   const openPicker = () => fileInput.click();
 
-  $('#addBtn').addEventListener('click', openPicker);
-  $('#pickBtn').addEventListener('click', openPicker);
-  $('#pasteBtn').addEventListener('click', pasteFromButton);
-  $('#demoBtn').addEventListener('click', loadDemo);
+  $$('.js-pick').forEach((b) => b.addEventListener('click', openPicker));
+  $$('.js-paste').forEach((b) => b.addEventListener('click', pasteFromButton));
+  $$('.js-demo').forEach((b) => b.addEventListener('click', loadDemo));
+  $('#drop').addEventListener('click', (e) => { if (!e.target.closest('button')) openPicker(); });
   fileInput.addEventListener('change', () => {
     const list = Array.from(fileInput.files);
     fileInput.value = '';
@@ -1695,6 +1925,11 @@
   const settingsBody = $('#settingsBody');
   settingsBody.addEventListener('change', (e) => {
     const el = e.target;
+    if (el.id === 'presetSel') {
+      if (el.value) applyPreset(el.value);
+      renderSettings();
+      return;
+    }
     if (!el.dataset.k) return;
     setSetting(el.dataset.k, el.type === 'checkbox' ? el.checked : el.value);
     renderSettings();

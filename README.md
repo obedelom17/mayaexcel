@@ -3,6 +3,14 @@
 Fusion de plusieurs fichiers Excel (.xlsx, .xls, .csv, .ods) en un seul tableau propre, trié et prêt à exporter.
 Application plein écran sur ordinateur, adaptée au téléphone, utilisable hors connexion. Aucun fichier n'est envoyé sur Internet.
 
+## Poste de travail
+
+- Assistant en trois étapes (Sources, Vérification, Export) et navigation latérale
+- **Types de fusion** prédéfinis : personnes et effectifs, chiffres et comptabilité, listes et inventaires, empilement simple, contrôle strict
+- **Modèles** : enregistrez vos réglages et corrections de colonnes pour les réutiliser sur un prochain lot ; export / import au format `.mayaexcel.json`
+- **Historique** des exports (réglages réutilisables, aucun fichier conservé) et **aide** intégrée
+- Indicateurs chiffrés, onglets Tableau / Colonnes / Contrôle, barre d'état
+
 ## Méthodes de fusion
 
 **Lecture des sources**
